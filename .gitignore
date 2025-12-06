@@ -1,0 +1,48 @@
+# JUCE Generated Files
+JuceLibraryCode/
+Builds/
+*.jucer.bak
+
+# Xcode
+*.xcodeproj/xcuserdata/
+*.xcodeproj/project.xcworkspace/xcuserdata/
+*.xcworkspace/xcuserdata/
+*.xcuserstate
+*.xcuserdatad/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Build artifacts
+*.o
+*.a
+*.dylib
+*.so
+*.dll
+*.exe
+
+# Debug files
+*.dSYM/
+*.su
+*.idb
+*.pdb
+
+# Temporary files
+*.tmp
+*.bak
+*.swp
+*~
+
+# IDE
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# Documentation temp (will be processed)
+docs/temp/*.md
+!docs/temp/README.md
+!docs/temp/.gitignore
+
