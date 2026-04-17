@@ -11,6 +11,7 @@
 #include <JuceHeader.h>
 #include "AudioBufferManager.h"
 #include "NetworkStreamer.h"
+#include "SynchronizationEngine.h"
 
 //==============================================================================
 /**
@@ -61,14 +62,17 @@ public:
     bool isBufferActive() const noexcept { return audioBufferManager != nullptr; }
     NetworkStreamer* getNetworkStreamer() const noexcept { return networkStreamer.get(); }
     bool isServerActive() const noexcept { return networkStreamer != nullptr && networkStreamer->isServerActive(); }
+    SynchronizationEngine* getSynchronizationEngine() const noexcept { return synchronizationEngine.get(); }
 
 private:
     //==============================================================================
     // AudioBufferManager para gestión lock-free de buffers
-    // Buffer circular: ~1 segundo de audio a 44.1kHz (44100 samples)
-    static constexpr int BUFFER_SIZE_SAMPLES = 44100;
+    // Buffer circular: ~3 segundos de audio a 48kHz (144000 samples)
+    // Esto da más margen para evitar que se llene y cause dropeos
+    static constexpr int BUFFER_SIZE_SAMPLES = 144000;
     
     std::unique_ptr<AudioBufferManager> audioBufferManager;
+    std::unique_ptr<SynchronizationEngine> synchronizationEngine;
     std::unique_ptr<NetworkStreamer> networkStreamer;
     
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (StreamAulaAudioProcessor)

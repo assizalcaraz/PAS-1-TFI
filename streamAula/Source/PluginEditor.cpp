@@ -9,6 +9,13 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 
+// Helper para crear String desde literales UTF-8 de forma segura
+// Evita problemas de aserción en juce_String.cpp con caracteres no ASCII
+static inline juce::String U8(const char* utf8) 
+{ 
+    return juce::String(juce::CharPointer_UTF8(utf8)); 
+}
+
 //==============================================================================
 StreamAulaAudioProcessorEditor::StreamAulaAudioProcessorEditor (StreamAulaAudioProcessor& p)
     : AudioProcessorEditor (&p), audioProcessor (p)
@@ -34,7 +41,7 @@ void StreamAulaAudioProcessorEditor::paint (juce::Graphics& g)
 
     // Título
     g.setColour (juce::Colours::white);
-    juce::Font titleFont (24.0f);
+    juce::Font titleFont (juce::FontOptions (24.0f));
     titleFont = titleFont.boldened();
     g.setFont (titleFont);
     g.drawFittedText ("streamAula", getLocalBounds().removeFromTop(40), juce::Justification::centred, 1);
@@ -77,7 +84,7 @@ void StreamAulaAudioProcessorEditor::paint (juce::Graphics& g)
         infoText << "Uso del buffer: " << juce::String::formatted("%.1f", usagePercent) << "%\n";
         infoText << "Total samples procesados: " << sampleCount << "\n";
         infoText << "Sample Rate: " << (int)sampleRate << " Hz\n";
-        infoText << "Canales: " << numChannels << "\n";
+        infoText << U8("Canales: ") << numChannels << "\n";
         infoText << "Tamaño buffer: " << bufferSize << " samples (~" 
                  << juce::String::formatted("%.2f", bufferSize / sampleRate) << " seg)";
         
@@ -104,8 +111,8 @@ void StreamAulaAudioProcessorEditor::paint (juce::Graphics& g)
             int port = networkStreamer->getPort();
             
             juce::String serverText;
-            serverText << "Servidor HTTP: Activo en puerto " << port << "\n";
-            serverText << "Clientes conectados: " << numClients;
+            serverText << U8("Servidor HTTP: Activo en puerto ") << port << "\n";
+            serverText << U8("Clientes conectados: ") << numClients;
             
             g.setColour (juce::Colours::lightgreen);
             g.setFont (juce::FontOptions (12.0f));
@@ -115,13 +122,13 @@ void StreamAulaAudioProcessorEditor::paint (juce::Graphics& g)
         {
             g.setColour (juce::Colours::orange);
             g.setFont (juce::FontOptions (12.0f));
-            g.drawFittedText ("Servidor HTTP: Inactivo", bounds.removeFromTop(20), juce::Justification::centredLeft, 1);
+            g.drawFittedText (U8("Servidor HTTP: Inactivo"), bounds.removeFromTop(20), juce::Justification::centredLeft, 1);
         }
     }
     else
     {
         g.setColour (juce::Colours::orange);
-        g.drawFittedText ("Buffer no inicializado\n(Reproduce audio para activar)", 
+        g.drawFittedText (U8("Buffer no inicializado\n(Reproduce audio para activar)"), 
                          bounds, juce::Justification::centred, 2);
     }
 }

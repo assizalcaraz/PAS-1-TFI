@@ -5,6 +5,12 @@
               companyEmail="assizalcaraz@gmail.com" companyName="Assiz">
   <MAINGROUP id="C5PJ1V" name="streamAula">
     <GROUP id="{D048BE72-6546-EF44-AB7D-FB1D7E9F89D7}" name="Source">
+      <GROUP id="{D447F414-C5EB-39A6-C345-9922278B213B}" name="web_ui">
+        <FILE id="xviAG5" name="app.js" compile="0" resource="1" file="Source/web_ui/app.js"/>
+        <FILE id="JIrE9y" name="index.html" compile="0" resource="1" file="Source/web_ui/index.html"/>
+        <FILE id="uWEvly" name="README.md" compile="0" resource="1" file="Source/web_ui/README.md"/>
+        <FILE id="AT3wQH" name="styles.css" compile="0" resource="1" file="Source/web_ui/styles.css"/>
+      </GROUP>
       <FILE id="LM0DTL" name="PluginProcessor.cpp" compile="1" resource="0"
             file="Source/PluginProcessor.cpp"/>
       <FILE id="Mi4wdf" name="PluginProcessor.h" compile="0" resource="0"
@@ -18,8 +24,11 @@
             file="Source/AudioBufferManager.h"/>
       <FILE id="nsCpp" name="NetworkStreamer.cpp" compile="1" resource="0"
             file="Source/NetworkStreamer.cpp"/>
-      <FILE id="nsH" name="NetworkStreamer.h" compile="0" resource="0"
-            file="Source/NetworkStreamer.h"/>
+      <FILE id="nsH" name="NetworkStreamer.h" compile="0" resource="0" file="Source/NetworkStreamer.h"/>
+      <FILE id="seCpp" name="SynchronizationEngine.cpp" compile="1" resource="0"
+            file="Source/SynchronizationEngine.cpp"/>
+      <FILE id="seH" name="SynchronizationEngine.h" compile="0" resource="0"
+            file="Source/SynchronizationEngine.h"/>
     </GROUP>
   </MAINGROUP>
   <MODULES>
@@ -40,7 +49,7 @@
   </MODULES>
   <JUCEOPTIONS JUCE_STRICT_REFCOUNTEDPOINTER="1" JUCE_VST3_CAN_REPLACE_VST2="0"/>
   <EXPORTFORMATS>
-    <XCODE_MAC targetFolder="Builds/MacOSX">
+    <XCODE_MAC targetFolder="Builds/MacOSX" customPList="&lt;plist&gt;&lt;dict&gt;&lt;key&gt;NSMicrophoneUsageDescription&lt;/key&gt;&lt;string&gt;Necesario para capturar audio del aula.&lt;/string&gt;&lt;/dict&gt;&lt;/plist&gt;">
       <CONFIGURATIONS>
         <CONFIGURATION isDebug="1" name="Debug" targetName="streamAula"/>
         <CONFIGURATION isDebug="0" name="Release" targetName="streamAula"/>

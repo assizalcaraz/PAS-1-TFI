@@ -1,171 +1,158 @@
-# streamAula - Plugin JUCE para Streaming de Audio
+# streamAula - Plugin de Streaming de Audio en Tiempo Real
 
-**Proyecto**: Trabajo Final - Programación Aplicada al Sonido  
-**Posgrado**: Especialización en Sonido para las Artes Digitales  
-**Universidad**: UNA (Universidad Nacional de las Artes)  
-**Autor**: Assiz Alcaraz Baxter  
-**GitHub**: https://github.com/assizalcaraz  
-**Web**: https://www.assiz.ar
+**Trabajo Final Integrador**  
+**Programación Aplicada al Sonido (PAS)**  
+**Especialización en Sonido para las Artes Digitales**  
+**Universidad Nacional de las Artes (UNA)**
 
 ---
 
-## 🎯 Objetivo
+## Descripción
 
-Desarrollar un **plugin de audio JUCE (C++)** que:
+streamAula es un plugin de audio desarrollado en C++ utilizando el framework JUCE que permite el streaming de audio en tiempo real desde un DAW hacia múltiples clientes conectados a través de la red local.
 
-1. **Gestione eficientemente buffers de audio** con bajo overhead
-2. **Implemente streaming sincronizado** para múltiples dispositivos
-3. **Mantenga sincronización precisa** (<5ms diferencia entre clientes)
-4. **Se integre nativamente con DAWs** (Reaper, etc.) como plugin VST3/AU
-5. **Demuestre dominio de C++** y procesamiento de audio en tiempo real
+El plugin funciona como una herramienta de captura y transmisión de audio del aula hacia estudiantes remotos, sin necesidad de hardware adicional. El audio del DAW se captura en el plugin y se transmite via HTTP a navegadores web.
 
 ---
 
-## 📋 Relación con aula_digital
+## Características
 
-Este proyecto es la **refactorización en C++/JUCE** de la aplicación Python `aula_digital`.
-
-- **Proyecto original**: [`aula_digital`](https://github.com/assizalcaraz/aula_digital) (Python/Flask)
-- **Proyecto refactorizado**: `PAS_TFI/streamAula` (C++/JUCE)
-- **Documentación de migración**: Ver [`aula_digital/docs/juce/`](https://github.com/assizalcaraz/aula_digital/tree/factorizacion_c%2B%2B/docs/juce)
-
----
-
-## 🏗️ Estado Actual
-
-### Proyecto Base
-- ✅ Proyecto JUCE configurado (VST3/AU/AAX)
-- ✅ Plugin básico compila y carga en DAW
-- ✅ Estructura de archivos estándar
-
-### Próximos Pasos
-Ver [Roadmap de Migración](https://github.com/assizalcaraz/aula_digital/blob/factorizacion_c%2B%2B/docs/juce/ROADMAP_MIGRACION_C%2B%2B.md) en `aula_digital`.
+- **Plugin VST3/AU/AAX** para integración con DAWs (Reaper, Logic Pro, etc.)
+- **Servidor HTTP embebido** - el plugin sirve su propia interfaz web
+- **Streaming a múltiples clientes** simultáneos
+- **Gestión lock-free de buffers** de audio (usando `juce::AbstractFifo`)
+- **Sincronización sample-accurate** basada en contador de samples
+- **Interfaz web** con reproductor de audio integrado
 
 ---
 
-## 📁 Estructura del Proyecto
+## Arquitectura
 
 ```
-PAS_TFI/
-└── NewProject/
-    ├── NewProject.jucer          # Archivo de configuración Projucer
-    ├── Source/
-    │   ├── PluginProcessor.h/cpp # Procesador de audio
-    │   └── PluginEditor.h/cpp    # Interfaz de usuario
-    ├── JuceLibraryCode/          # Código de JUCE (generado)
-    └── Builds/
-        └── MacOSX/               # Proyectos Xcode
+DAW (pista de audio)
+       │
+       ▼
+PluginProcessor::processBlock()  ← captura audio
+       │
+       ▼
+AudioBufferManager (buffer circular lock-free)
+       │
+       ▼
+NetworkStreamer (servidor HTTP :8080)
+       │
+       ├── /       → Interfaz web con reproductor
+       ├── /stream → Stream de audio PCM
+       └── /config → Configuración JSON
 ```
 
----
+### Componentes Principales
 
-## 🚀 Desarrollo
-
-### Requisitos
-- JUCE Framework (última versión)
-- Projucer (JUCE Project Generator)
-- Xcode (macOS) o Visual Studio (Windows)
-- DAW para testing (Reaper recomendado)
-
-### Compilar
-1. Abrir `NewProject.jucer` en Projucer
-2. Configurar módulos JUCE necesarios
-3. Generar proyecto Xcode/Visual Studio
-4. Compilar desde IDE
-
-### Testing
-1. Compilar plugin en modo Release
-2. Copiar `.vst3` o `.component` a carpeta de plugins del sistema
-3. Cargar en DAW (Reaper)
-4. Verificar que plugin aparece y procesa audio
+| Componente | Descripción |
+|------------|-------------|
+| `AudioBufferManager` | Buffer circular lock-free para gestión de audio |
+| `NetworkStreamer` | Servidor HTTP embebido para streaming |
+| `SynchronizationEngine` | Motor de sincronización sample-accurate |
+| `PluginProcessor` | Procesador principal del plugin |
 
 ---
 
-## 📚 Documentación
+## Decisiones de Diseño
 
-### Documentación de Migración (en aula_digital)
-- [Roadmap de Migración](https://github.com/assizalcaraz/aula_digital/blob/factorizacion_c%2B%2B/docs/juce/ROADMAP_MIGRACION_C%2B%2B.md)
-- [Análisis de Migración](https://github.com/assizalcaraz/aula_digital/blob/factorizacion_c%2B%2B/docs/juce/ANALISIS_MIGRACION_JUCE.md)
-- [Recomendaciones Técnicas](https://github.com/assizalcaraz/aula_digital/blob/factorizacion_c%2B%2B/docs/juce/RECOMENDACIONES_JUCE.md)
-- [Resumen Ejecutivo](https://github.com/assizalcaraz/aula_digital/blob/factorizacion_c%2B%2B/docs/juce/RESUMEN_EJECUTIVO_JUCE.md)
+### Buffer Circular Lock-Free
+El audio thread no puede bloquearse. Se utiliza `juce::AbstractFifo` para permitir escritura y lectura concurrentes sin locks, evitando dropouts en el procesamiento de audio.
 
-### Índice Completo
-Ver [`aula_digital/docs/juce/INDICE_DOCUMENTACION_JUCE.md`](https://github.com/assizalcaraz/aula_digital/blob/factorizacion_c%2B%2B/docs/juce/INDICE_DOCUMENTACION_JUCE.md)
+### Servidor HTTP Embebido
+El servidor HTTP vive dentro del plugin, eliminando dependencias externas y haciendo el sistema autocontenido.
 
----
-
-## 🗺️ Roadmap
-
-### Fase 0: Setup ✅
-- [x] Proyecto JUCE configurado
-- [x] Plugin básico compila
-- [x] Plugin carga en DAW
-
-### Fase 1: AudioBufferManager (Semanas 2-3)
-- [ ] Implementar `AudioBufferManager` con `juce::AbstractFifo`
-- [ ] Pre-reservación de memoria
-- [ ] Alineación SIMD
-- [ ] Tests unitarios
-
-### Fase 2: Captura DAW (Semana 4)
-- [ ] Implementar `processBlock()`
-- [ ] Passthrough correcto
-- [ ] Escritura a buffer
-
-### Fase 3: NetworkStreamer (Semanas 5-6)
-- [ ] Servidor HTTP embebido
-- [ ] Múltiples clientes
-- [ ] Thread separado
-
-### Fase 4: Sincronización (Semanas 7-8)
-- [ ] Sample-accurate timing
-- [ ] Compensación de latencia
-- [ ] Métricas de precisión
-
-### Fase 5: Codificación (Semana 9)
-- [ ] OPUS encoder
-- [ ] Fallback PCM
-
-### Fase 6: UI (Semana 10)
-- [ ] Plugin editor
-- [ ] QR code
-- [ ] Estadísticas
-
-### Fase 7: Optimización (Semanas 11-12)
-- [ ] Tests completos
-- [ ] Métricas documentadas
-- [ ] Presentación
-
-**Ver roadmap completo**: [`aula_digital/docs/juce/ROADMAP_MIGRACION_C++.md`](https://github.com/assizalcaraz/aula_digital/blob/factorizacion_c%2B%2B/docs/juce/ROADMAP_MIGRACION_C%2B%2B.md)
+### Timestamps Basados en Sample Count
+La sincronización usa contador de samples en lugar de wall-clock, garantizando precisión a nivel de muestra de audio.
 
 ---
 
-## 📊 Métricas Objetivo
+## Requisitos
 
-- **Latencia total**: <20ms (en red local)
-- **Sincronización**: <5ms diferencia entre clientes
-- **Escalabilidad**: 50+ clientes simultáneos
-- **CPU**: <20% con 10 clientes, <50% con 50 clientes
-
----
-
-## 🎓 Aspectos Académicos
-
-1. **Gestión de Buffers**: Lock-free structures, memory alignment, anti-dropout
-2. **Sincronización**: Sample-accurate timing, network compensation
-3. **Tiempo Real**: Real-time constraints, thread separation
-4. **Integración Profesional**: Plugin architecture, DAW integration
+- **JUCE Framework** 8.0+
+- **Xcode** (macOS) o **Visual Studio** (Windows)
+- **Projucer** (incluido con JUCE)
+- **DAW** compatible con VST3/AU (Reaper recomendado)
 
 ---
 
-## 📝 Notas de Desarrollo
+## Compilación e Instalación
 
-- Este proyecto se desarrolla en paralelo con `aula_digital`
-- La documentación principal está en `aula_digital/docs/juce/`
-- El código fuente se desarrolla en este proyecto (`PAS_TFI`)
-- Commits y versiones se gestionan en este repositorio
+### 1. Abrir el proyecto
+```bash
+# Abrir en Projucer
+open streamAula/streamAula.jucer
+```
+
+### 2. Configurar rutas de módulos JUCE
+En Projucer, verificar que las rutas a los módulos JUCE apunten a la instalación local (por defecto `/Applications/JUCE/modules`).
+
+### 3. Generar proyecto
+```
+File → Export → Xcode
+```
+
+### 4. Compilar en Xcode
+- Seleccionar destino (MacOSX)
+- Compilar en modo Release
+- El plugin se genera en `Builds/MacOSX/build/`
+
+### 5. Instalar el plugin
+
+**VST3:**
+```bash
+cp -r Builds/MacOSX/build/streamAula.vst3 ~/Library/Audio/Plug-Ins/VST3/
+```
+
+**Audio Unit:**
+```bash
+cp -r Builds/MacOSX/build/streamAula.component ~/Library/Audio/Plug-Ins/Components/
+```
+
+### 6. Usar en el DAW
+1. Abrir el DAW (Reaper recomendado)
+2. Agregar el plugin "streamAula" en una pista de audio
+3. Asegurar que hay audio en la pista
+4. Conectar clientes web
 
 ---
 
-**Última actualización**: 2025-12-06
+## Uso
 
+### Desde el DAW
+1. Cargar el plugin en una pista de audio
+2. El servidor HTTP arranca automáticamente en puerto 8080
+3. Verificar en la consola que el servidor está activo
+
+### Desde el navegador web
+1. Abrir `http://localhost:8080` (o la IP del equipo donde corre el plugin)
+2. Hacer clic en "Iniciar Streaming"
+3. El audio del DAW debería comenzar a reproducirse
+
+---
+
+## Especificaciones Técnicas
+
+| Aspecto | Valor |
+|---------|-------|
+| Framework | JUCE 8.0.10 |
+| Compilador | Xcode (macOS) |
+| Targets | VST3, AU, Standalone |
+| Buffer | 144,000 samples (~3s @ 48kHz) |
+| Puerto HTTP | 8080 |
+| Canales | Estéreo |
+| Formato salida | PCM 16-bit |
+| Latencia objetivo | <20ms |
+
+---
+
+## Repositorio
+
+- **GitHub**: https://github.com/assizalcaraz/PAS_TFI
+- **Documentación**: Carpeta `docs/`
+
+---
+
+*Trabajo Final Integrador - PAS - UNA - 2026*

@@ -8,6 +8,25 @@
 */
 
 #include "AudioBufferManager.h"
+#include <cmath>
+#include <atomic>
+
+// Helper para crear String desde literales UTF-8 de forma segura
+static inline juce::String U8(const char* utf8) 
+{ 
+    return juce::String(juce::CharPointer_UTF8(utf8)); 
+}
+
+// Flag para habilitar logs de diagnóstico (solo en debug)
+#if JUCE_DEBUG
+    #define ENABLE_BUFFER_DEBUG_LOGS 1
+#else
+    #define ENABLE_BUFFER_DEBUG_LOGS 0
+#endif
+
+// Contador estático para limitar frecuencia de logs
+static std::atomic<int> writeLogCounter{0};
+static std::atomic<int> readLogCounter{0};
 
 //==============================================================================
 AudioBufferManager::AudioBufferManager(int bufferSizeSamples, int numChannels, double sampleRate)
@@ -41,9 +60,68 @@ bool AudioBufferManager::writeToBuffer(const juce::AudioBuffer<float>& input)
     // Verificar que tenemos espacio suficiente
     if (fifo.getFreeSpace() < numSamples)
     {
-        // Buffer lleno - esto no debería pasar en condiciones normales
-        // pero es mejor manejarlo que causar un crash
-        return false;
+        // Buffer lleno - verificar si el audio de entrada es silencio
+        // Si es silencio, descartar datos antiguos para permitir escritura
+        double rmsSum = 0.0;
+        for (int ch = 0; ch < inputChannels; ++ch)
+        {
+            const float* channelData = input.getReadPointer(ch);
+            double channelSum = 0.0;
+            for (int i = 0; i < numSamples; ++i)
+            {
+                channelSum += channelData[i] * channelData[i];
+            }
+            double channelRms = std::sqrt(channelSum / numSamples);
+            rmsSum += channelRms;
+        }
+        double avgRms = rmsSum / (inputChannels > 0 ? inputChannels : 1);
+        
+        // Si el audio de entrada es silencio y el buffer está lleno,
+        // descartar datos antiguos para permitir escritura
+        if (avgRms < 0.0001)
+        {
+            #if ENABLE_BUFFER_DEBUG_LOGS
+            static int silenceWarningCount = 0;
+            if (silenceWarningCount++ % 100 == 0)
+            {
+                juce::String warningMsg("AudioBufferManager: Buffer lleno con silencio - descartando datos antiguos. ");
+                warningMsg += U8("ADVERTENCIA: El plugin no est\xc3\xa1 recibiendo audio de entrada. ");
+                warningMsg += U8("Verifique la configuraci\xc3\xb3n del host.");
+                juce::Logger::writeToLog(warningMsg);
+            }
+            #endif
+            
+            // Descartar datos antiguos: leer y descartar suficientes samples para hacer espacio
+            int samplesToDiscard = numSamples;
+            juce::AudioBuffer<float> discardBuffer;
+            discardBuffer.setSize(numChannels, samplesToDiscard, false, false, true);
+            readFromBuffer(discardBuffer, samplesToDiscard);
+            
+            // Ahora debería haber espacio, intentar escribir de nuevo
+            // (continuar con el código normal abajo)
+        }
+        else
+        {
+            // Audio real pero buffer lleno - NO descartar datos antiguos
+            // En su lugar, perder este bloque para evitar dropeos en el stream
+            // Esto es mejor que descartar datos antiguos que ya están siendo transmitidos
+            #if ENABLE_BUFFER_DEBUG_LOGS
+            static int overflowWarningCount = 0;
+            if (overflowWarningCount++ % 100 == 0)
+            {
+                juce::String warningMsg("AudioBufferManager: Buffer lleno - PERDIENDO bloque actual (");
+                warningMsg += juce::String(numSamples);
+                warningMsg += U8(" samples). ");
+                warningMsg += U8("Esto indica que el network thread no est\xc3\xa1 leyendo lo suficientemente r\xc3\xa1pido. ");
+                warningMsg += U8("Aumentar velocidad de lectura o reducir tama\xc3\xb1o de chunks.");
+                juce::Logger::writeToLog(warningMsg);
+            }
+            #endif
+            
+            // NO escribir este bloque - retornar false para indicar que no se escribió
+            // Esto previene descartar datos antiguos que ya están siendo transmitidos
+            return false;
+        }
     }
     
     // Preparar escritura usando AbstractFifo (lock-free)
@@ -73,6 +151,37 @@ bool AudioBufferManager::writeToBuffer(const juce::AudioBuffer<float>& input)
     
     // Actualizar contador de samples (atómico, lock-free)
     sampleCount.fetch_add(numSamples);
+    
+    // Log de diagnóstico: calcular RMS del audio escrito (cada 100 escrituras)
+    #if ENABLE_BUFFER_DEBUG_LOGS
+    int writeCount = writeLogCounter.fetch_add(1);
+    if (writeCount % 100 == 0)
+    {
+        double rmsSum = 0.0;
+        for (int ch = 0; ch < inputChannels && ch < numChannels; ++ch)
+        {
+            const float* channelData = input.getReadPointer(ch);
+            double channelSum = 0.0;
+            for (int i = 0; i < numSamples; ++i)
+            {
+                channelSum += channelData[i] * channelData[i];
+            }
+            double channelRms = std::sqrt(channelSum / numSamples);
+            rmsSum += channelRms;
+        }
+        double avgRms = rmsSum / (inputChannels > 0 ? inputChannels : 1);
+        
+        juce::String msg("AudioBufferManager: writeToBuffer - RMS: ");
+        msg += juce::String(avgRms, 6);
+        msg += ", samples: ";
+        msg += juce::String(numSamples);
+        msg += ", canales: ";
+        msg += juce::String(inputChannels);
+        msg += ", available: ";
+        msg += juce::String(fifo.getNumReady());
+        juce::Logger::writeToLog(msg);
+    }
+    #endif
     
     return true;
 }
@@ -115,6 +224,37 @@ bool AudioBufferManager::readFromBuffer(juce::AudioBuffer<float>& output, int nu
     
     // Finalizar lectura
     fifo.finishedRead(numSamples);
+    
+    // Log de diagnóstico: calcular RMS del audio leído (cada 50 lecturas)
+    #if ENABLE_BUFFER_DEBUG_LOGS
+    int readCount = readLogCounter.fetch_add(1);
+    if (readCount % 50 == 0)
+    {
+        double rmsSum = 0.0;
+        for (int ch = 0; ch < numChannels; ++ch)
+        {
+            const float* channelData = output.getReadPointer(ch);
+            double channelSum = 0.0;
+            for (int i = 0; i < numSamples; ++i)
+            {
+                channelSum += channelData[i] * channelData[i];
+            }
+            double channelRms = std::sqrt(channelSum / numSamples);
+            rmsSum += channelRms;
+        }
+        double avgRms = rmsSum / numChannels;
+        
+        juce::String msg("AudioBufferManager: readFromBuffer - RMS: ");
+        msg += juce::String(avgRms, 6);
+        msg += ", samples: ";
+        msg += juce::String(numSamples);
+        msg += ", canales: ";
+        msg += juce::String(numChannels);
+        msg += ", available: ";
+        msg += juce::String(fifo.getNumReady());
+        juce::Logger::writeToLog(msg);
+    }
+    #endif
     
     return true;
 }
