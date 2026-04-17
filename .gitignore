@@ -46,3 +46,4 @@ docs/temp/*.md
 !docs/temp/README.md
 !docs/temp/.gitignore
 
+*.code-workspace
