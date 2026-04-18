@@ -1,22 +1,40 @@
 <!DOCTYPE html>
-<html>
+<html lang="es">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Aula Digital - Streaming de Audio</title>
+    <title>streamAula — streaming de audio desde el plugin</title>
     <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
     <div class="container">
-        <h1>🎧 Aula Digital</h1>
+        <header class="page-header">
+            <h1>streamAula</h1>
+            <p class="tagline">Escucha en el navegador el audio que procesa el plugin en tu DAW.</p>
+        </header>
+
         <div class="status" id="status">Listo para conectar</div>
-        <button id="btnIniciar">▶️ Iniciar Audio</button>
-        <audio id="audioPlayer" controls style="display: none;">
+        <button type="button" id="btnIniciar">▶️ Iniciar audio</button>
+        <audio id="audioPlayer" controls hidden>
             Tu navegador no soporta el elemento de audio.
         </audio>
-        <p>Haz clic en el botón para escuchar el audio en tiempo real.</p>
+        <p class="hint">Pulsa el botón para abrir la conexión y reproducir en tiempo casi real (según carga del host y de la red).</p>
+
+        <section class="about" aria-labelledby="about-heading">
+            <h2 id="about-heading">Sobre este trabajo</h2>
+            <p>
+                <strong>streamAula</strong> es un plugin de audio (JUCE) pensado como trabajo final integrador de posgrado:
+                expone un servidor HTTP embebido, lee un buffer compartido con el motor de audio del host y retransmite
+                PCM a uno o varios clientes web. La interfaz que ves aquí consume el endpoint de streaming y reproduce
+                el audio con la Web Audio API.
+            </p>
+        </section>
+
+        <footer class="meta-footer">
+            <p class="author"><strong>Autor:</strong> José Assiz Alcaraz Baxter</p>
+            <p class="license"><strong>Licencia de uso:</strong> usarse libremente referenciando al autor.</p>
+        </footer>
     </div>
     <script src="/app.js"></script>
 </body>
 </html>
-

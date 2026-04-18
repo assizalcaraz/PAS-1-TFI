@@ -5,17 +5,44 @@ body {
     background: #000;
     color: #fff;
     text-align: center;
+    line-height: 1.45;
 }
+
 .container {
-    max-width: 600px;
+    max-width: 640px;
     margin: 0 auto;
 }
+
+.page-header {
+    margin-bottom: 8px;
+}
+
+.page-header h1 {
+    margin: 0 0 6px 0;
+    font-size: 1.85rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+}
+
+.tagline {
+    margin: 0 0 16px 0;
+    font-size: 0.95rem;
+    color: #bbb;
+}
+
 .status {
     margin: 20px 0;
     padding: 10px;
     background: #333;
     border-radius: 5px;
 }
+
+.hint {
+    font-size: 0.9rem;
+    color: #aaa;
+    margin: 12px 0 24px 0;
+}
+
 button {
     padding: 15px 30px;
     font-size: 18px;
@@ -24,11 +51,54 @@ button {
     border: none;
     border-radius: 5px;
     cursor: pointer;
-    margin: 20px 0;
+    margin: 20px 0 0 0;
     width: 100%;
 }
+
 button:disabled {
     background: #333;
     cursor: not-allowed;
 }
 
+.about {
+    text-align: left;
+    margin-top: 28px;
+    padding: 16px 18px;
+    background: #111;
+    border: 1px solid #333;
+    border-radius: 8px;
+}
+
+.about h2 {
+    margin: 0 0 10px 0;
+    font-size: 1.05rem;
+    text-align: center;
+    color: #e8e8e8;
+}
+
+.about p {
+    margin: 0;
+    font-size: 0.88rem;
+    color: #ccc;
+}
+
+.meta-footer {
+    margin-top: 22px;
+    padding-top: 18px;
+    border-top: 1px solid #333;
+    font-size: 0.82rem;
+    color: #999;
+    text-align: left;
+}
+
+.meta-footer p {
+    margin: 0 0 8px 0;
+}
+
+.meta-footer p:last-child {
+    margin-bottom: 0;
+}
+
+.meta-footer strong {
+    color: #bbb;
+}

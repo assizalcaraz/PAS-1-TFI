@@ -25,7 +25,7 @@ const status = document.getElementById('status');
 
 let isPlaying = false;
 let bufferAcumulado = new Uint8Array(0);
-let bufferChunked = new Uint8Array(0); // Buffer para procesar HTTP chunked encoding
+/** La API Fetch suele decodificar ya el chunked encoding; el body es PCM int16 continuo (no re-parsear hex). */
 
 // Enfoque simple: acumular datos y reproducir cuando tengamos suficiente
 let audioBufferAcumulado = null; // Buffer de audio acumulado para reproducción continua
@@ -41,6 +41,19 @@ function actualizarEstado(mensaje, color) {
     status.textContent = mensaje;
     status.style.background = color;
     console.log(mensaje);
+}
+
+function mergeUint8(a, b) {
+    if (b.length === 0)
+        return a;
+    const out = new Uint8Array(a.length + b.length);
+    out.set(a, 0);
+    out.set(b, a.length);
+    return out;
+}
+
+function yieldToMain() {
+    return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 async function iniciarStreaming() {
@@ -123,7 +136,6 @@ async function iniciarStreaming() {
         audioBufferAcumulado = null;
         muestrasAcumuladas = 0;
         bufferAcumulado = new Uint8Array(0);
-        bufferChunked = new Uint8Array(0);
         chunksReproducidos = 0;
         
         console.log('📖 Iniciando lectura del stream...');
@@ -155,68 +167,12 @@ async function iniciarStreaming() {
             
             if (!primerChunkRecibido && value && value.length > 0) {
                 primerChunkRecibido = true;
-                console.log('✅ Primer chunk recibido del servidor:', value.length, 'bytes');
+                console.log('✅ Primer bloque recibido del servidor:', value.length, 'bytes (PCM continuo vía Fetch)');
             }
-            
-            // Acumular bytes del stream HTTP chunked
-            const nuevoBufferChunked = new Uint8Array(bufferChunked.length + value.length);
-            nuevoBufferChunked.set(bufferChunked);
-            nuevoBufferChunked.set(value, bufferChunked.length);
-            bufferChunked = nuevoBufferChunked;
-            
-            // Procesar HTTP chunked transfer encoding
-            // Formato: [tamaño en hex]\r\n[datos]\r\n[tamaño en hex]\r\n[datos]\r\n...
-            while (bufferChunked.length > 0) {
-                // Buscar el primer \r\n (fin del header de tamaño)
-                let headerEnd = -1;
-                for (let i = 0; i < bufferChunked.length - 1; i++) {
-                    if (bufferChunked[i] === 0x0D && bufferChunked[i + 1] === 0x0A) { // \r\n
-                        headerEnd = i;
-                        break;
-                    }
-                }
-                
-                if (headerEnd === -1) {
-                    // No hay header completo aún, esperar más datos
-                    break;
-                }
-                
-                // Leer tamaño del chunk (en hexadecimal)
-                const headerBytes = bufferChunked.slice(0, headerEnd);
-                const headerText = new TextDecoder().decode(headerBytes);
-                const chunkSize = parseInt(headerText, 16);
-                
-                if (chunkSize === 0) {
-                    // Chunk final (0\r\n\r\n)
-                    bufferChunked = new Uint8Array(0);
-                    console.log('📦 Stream HTTP chunked finalizado');
-                    break;
-                }
-                
-                // Verificar que tenemos el chunk completo: header + \r\n + datos + \r\n
-                const chunkDataStart = headerEnd + 2; // Después de \r\n
-                const chunkDataEnd = chunkDataStart + chunkSize;
-                const chunkTerminatorStart = chunkDataEnd;
-                const chunkTerminatorEnd = chunkTerminatorStart + 2; // \r\n
-                
-                if (bufferChunked.length < chunkTerminatorEnd) {
-                    // No tenemos el chunk completo aún, esperar más datos
-                    break;
-                }
-                
-                // Extraer datos del chunk (sin headers)
-                const chunkData = bufferChunked.slice(chunkDataStart, chunkDataEnd);
-                
-                // Remover el chunk procesado del buffer
-                bufferChunked = bufferChunked.slice(chunkTerminatorEnd);
-                
-                // Agregar datos de audio al buffer de procesamiento
-                const nuevoBuffer = new Uint8Array(bufferAcumulado.length + chunkData.length);
-                nuevoBuffer.set(bufferAcumulado);
-                nuevoBuffer.set(chunkData, bufferAcumulado.length);
-                bufferAcumulado = nuevoBuffer;
-            }
-            
+
+            if (value != null && value.byteLength > 0)
+                bufferAcumulado = mergeUint8(bufferAcumulado, value);
+
             // Procesar según el formato
             if (configAudio.formato === 'mp3') {
                 // Para MP3, usar procesamiento especial
@@ -229,7 +185,8 @@ async function iniciarStreaming() {
                 const muestrasNecesarias = 1024;
                 const bytesNecesarios = muestrasNecesarias * bytesPorMuestra * configAudio.channels;
                 
-                // Procesar todos los chunks completos disponibles
+                // Procesar frames PCM; ceder el hilo cada varios frames para no congelar la pestaña
+                let framesProcesados = 0;
                 while (bufferAcumulado.length >= bytesNecesarios) {
                     const chunkBytes = bufferAcumulado.slice(0, bytesNecesarios);
                     bufferAcumulado = bufferAcumulado.slice(bytesNecesarios);
@@ -292,6 +249,9 @@ async function iniciarStreaming() {
                     
                     // Enfoque simple: acumular muestras y reproducir cuando tengamos suficiente
                     acumularYReproducir(float32Array);
+
+                    if ((++framesProcesados & 31) === 0)
+                        await yieldToMain();
                 }
                 
                 // Log si el buffer está creciendo demasiado (posible problema de procesamiento)
@@ -315,7 +275,6 @@ async function iniciarStreaming() {
         audioBufferAcumulado = null;
         muestrasAcumuladas = 0;
         bufferAcumulado = new Uint8Array(0);
-        bufferChunked = new Uint8Array(0);
         chunksReproducidos = 0;
         nextPlayTime = 0;
         necesitaResampling = false;
