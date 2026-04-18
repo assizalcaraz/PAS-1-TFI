@@ -67,9 +67,8 @@ public:
 private:
     //==============================================================================
     // AudioBufferManager para gestión lock-free de buffers
-    // Buffer circular: ~3 segundos de audio a 48kHz (144000 samples)
-    // Esto da más margen para evitar que se llene y cause dropeos
-    static constexpr int BUFFER_SIZE_SAMPLES = 144000;
+    // Buffer circular: ~1.5 segundos de audio a 48kHz (72000 samples)
+    static constexpr int BUFFER_SIZE_SAMPLES = 72000;
     
     std::unique_ptr<AudioBufferManager> audioBufferManager;
     std::unique_ptr<SynchronizationEngine> synchronizationEngine;

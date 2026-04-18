@@ -27,7 +27,7 @@ let bufferChunked = new Uint8Array(0); // Buffer para procesar HTTP chunked enco
 // Enfoque simple: acumular datos y reproducir cuando tengamos suficiente
 let audioBufferAcumulado = null; // Buffer de audio acumulado para reproducción continua
 let muestrasAcumuladas = 0;
-const muestrasPorBuffer = 4096; // Buffer más grande para reproducción más fluida (~85ms a 48kHz)
+const muestrasPorBuffer = 8192; // Buffer más grande para reproducción más fluida (~170ms a 48kHz)
 
 // Variables para resampling si es necesario
 let necesitaResampling = false;

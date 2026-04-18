@@ -113,54 +113,10 @@ void StreamAulaAudioProcessor::changeProgramName (int index, const juce::String&
 //==============================================================================
 void StreamAulaAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
-    // Log de configuración de audio
-    #if JUCE_DEBUG
-    {
-        int numInputChannels = getTotalNumInputChannels();
-        int numOutputChannels = getTotalNumOutputChannels();
-        auto inputLayout = getBusesLayout().getMainInputChannelSet();
-        auto outputLayout = getBusesLayout().getMainOutputChannelSet();
-        
-        juce::String configMsg(U8("PluginProcessor: prepareToPlay - SampleRate: "));
-        configMsg += juce::String(sampleRate, 0);
-        configMsg += U8(" Hz, SamplesPerBlock: ");
-        configMsg += juce::String(samplesPerBlock);
-        configMsg += U8(", Input Channels: ");
-        configMsg += juce::String(numInputChannels);
-        configMsg += U8(", Output Channels: ");
-        configMsg += juce::String(numOutputChannels);
-        configMsg += U8(", Input Layout: ");
-        configMsg += inputLayout.getDescription();
-        configMsg += U8(", Output Layout: ");
-        configMsg += outputLayout.getDescription();
-        
-        if (numInputChannels == 0)
-        {
-            configMsg += U8(" [ADVERTENCIA: No hay canales de entrada configurados!]");
-            configMsg += U8("\n  -> En modo standalone, configure el dispositivo de entrada en Audio/MIDI Settings");
-            configMsg += U8("\n  -> Verifique que el dispositivo de entrada este activo y no silenciado");
-        }
-        else
-        {
-            configMsg += U8("\n  -> Canales de entrada configurados correctamente");
-            configMsg += U8("\n  -> Si no hay audio, verifique permisos de microfono en macOS");
-            configMsg += U8("\n  -> Verifique que el dispositivo de entrada este activo en Audio/MIDI Settings");
-        }
-        
-        juce::Logger::writeToLog(configMsg);
-    }
-    #endif
-    
-    // Inicializar AudioBufferManager con el sample rate y número de canales
-    // Buffer circular de ~1 segundo de audio
+    // Siempre crear nuevo AudioBufferManager para evitar estado corrupto
     int numChannels = getTotalNumInputChannels();
     if (numChannels == 0)
-    {
-        numChannels = 2; // Default a estéreo si no hay input
-        #if JUCE_DEBUG
-        juce::Logger::writeToLog(U8("PluginProcessor: WARNING - No hay canales de entrada, usando default est\xc3\xa9reo (2 canales)"));
-        #endif
-    }
+        numChannels = 2;
     
     audioBufferManager = std::make_unique<AudioBufferManager>(
         BUFFER_SIZE_SAMPLES,
@@ -168,57 +124,25 @@ void StreamAulaAudioProcessor::prepareToPlay (double sampleRate, int samplesPerB
         sampleRate
     );
     
-    // Inicializar SynchronizationEngine
+    // Siempre crear nuevo SynchronizationEngine
     synchronizationEngine = std::make_unique<SynchronizationEngine>(
         audioBufferManager.get(),
-        100  // Buffer de sincronización: últimos 100 chunks
+        100
     );
     
-    // Inicializar NetworkStreamer con SynchronizationEngine
-    // IMPORTANTE: Verificar que no exista ya un NetworkStreamer activo
-    // para evitar reinicios en bucle cuando se recrea el editor o cambia el estado
-    if (networkStreamer != nullptr && networkStreamer->isServerActive())
-    {
-        // Ya existe un servidor activo, no reiniciar
-        // Esto previene reinicios cuando prepareToPlay se llama múltiples veces
-        return;
-    }
-    
-    // Si existe pero no está activo, liberarlo primero
-    if (networkStreamer != nullptr)
-    {
-        networkStreamer->stopServer();
-        networkStreamer.reset();
-    }
-    
+    // Siempre crear nuevo NetworkStreamer
     networkStreamer = std::make_unique<NetworkStreamer>(
         audioBufferManager.get(),
-        synchronizationEngine.get(),  // Pasar SynchronizationEngine
-        8080  // Puerto por defecto
+        synchronizationEngine.get(),
+        8080
     );
     
-    // Iniciar servidor
-    #if JUCE_DEBUG
-    juce::String logMsg("PluginProcessor: Intentando iniciar NetworkStreamer en puerto 8080...");
-    juce::Logger::writeToLog(logMsg);
-    #endif
-    
-    if (!networkStreamer->startServer())
-    {
-        // Error al iniciar servidor (puede ser que el puerto esté ocupado)
+    if (!networkStreamer->startServer()) {
         #if JUCE_DEBUG
-        juce::String errorMsg = U8("PluginProcessor: ERROR - No se pudo iniciar NetworkStreamer. El puerto puede estar ocupado.");
-        juce::Logger::writeToLog(errorMsg);
+        juce::Logger::writeToLog(U8("PluginProcessor: ERROR - No se pudo iniciar NetworkStreamer"));
         #endif
         networkStreamer.reset();
     }
-    #if JUCE_DEBUG
-    else
-    {
-        juce::String successMsg = U8("PluginProcessor: NetworkStreamer iniciado correctamente.");
-        juce::Logger::writeToLog(successMsg);
-    }
-    #endif
 }
 
 void StreamAulaAudioProcessor::releaseResources()

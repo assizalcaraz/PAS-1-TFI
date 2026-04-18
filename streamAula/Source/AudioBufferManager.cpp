@@ -91,11 +91,10 @@ bool AudioBufferManager::writeToBuffer(const juce::AudioBuffer<float>& input)
             }
             #endif
             
-            // Descartar datos antiguos: leer y descartar suficientes samples para hacer espacio
+            // Descartar datos antiguos sin alloc: tempBuffer se dimensiona en ctor/prepare al menos a bufferSize
             int samplesToDiscard = numSamples;
-            juce::AudioBuffer<float> discardBuffer;
-            discardBuffer.setSize(numChannels, samplesToDiscard, false, false, true);
-            readFromBuffer(discardBuffer, samplesToDiscard);
+            jassert (tempBuffer.getNumChannels() == numChannels && tempBuffer.getNumSamples() >= samplesToDiscard);
+            readFromBuffer (tempBuffer, samplesToDiscard);
             
             // Ahora debería haber espacio, intentar escribir de nuevo
             // (continuar con el código normal abajo)

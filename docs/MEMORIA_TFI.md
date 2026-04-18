@@ -21,28 +21,35 @@ El plugin captura el audio de entrada desde el DAW y lo transmite mediante HTTP 
 ### 2.1 Flujo de Audio
 
 ```
-DAW (pista de audio) 
+DAW (pista de audio)
     → PluginProcessor::processBlock()
-    → AudioBufferManager (buffer circular lock-free)
-    → NetworkStreamer (servidor HTTP)
+    → AudioBufferManager (AbstractFifo: un escritor = audio thread)
+    → Hilo AudioBroadcast (único lector de readFromBuffer)
+    → PerClientAudioQueue × N (copia PCM por cliente; backpressure por cola)
+    → ClientWorker × N (solo socket HTTP chunked)
     → Clientes web (navegadores)
 ```
+
+**Contrato SPSC:** `juce::AbstractFifo` permite exactamente **un** hilo que llama a `readFromBuffer`. Varios clientes no pueden leer el mismo FIFO; el fan-out anterior replica el mismo chunk de audio hacia cada cola de salida.
 
 ### 2.2 Componentes Principales
 
 #### AudioBufferManager
 Gestor de buffer circular lock-free usando `juce::AbstractFifo`:
-- Escritura desde el audio thread sin bloqueo
-- Lectura desde el network thread sin locks
-- Pre-reserva de memoria para evitar allocation en tiempo real
+- Escritura desde el audio thread sin bloqueo (único escritor)
+- Lectura desde **un solo** hilo de broadcast (único lector), no desde cada `ClientWorker`
+- Pre-reserva de memoria para evitar allocation en tiempo real en el camino nominal
 
 **Especificaciones:**
-- Tamaño: 144,000 samples (~3 segundos @ 48kHz)
+- Tamaño: 72,000 samples (~1,5 segundos @ 48 kHz)
 - Canales: hasta 2 (estéreo)
 - Contador atómico de samples procesados
 
 #### NetworkStreamer
-Servidor HTTP embebido que corre en thread separado:
+Servidor HTTP embebido:
+- Thread de aceptación de conexiones (`NetworkStreamer::run`)
+- Thread **AudioBroadcast**: única lectura del `AudioBufferManager` y distribución a colas PCM por cliente
+- `ClientWorker`: HTTP + consumo de su cola y escritura chunked al socket
 - Puerto: 8080 (configurable)
 - Endpoints:
   - `/` - Interfaz web con reproductor
@@ -50,10 +57,7 @@ Servidor HTTP embebido que corre en thread separado:
   - `/config` - Configuración en JSON
 
 #### SynchronizationEngine
-Motor de sincronización basado en sample count:
-- Timestamps basados en contador de samples
-- Buffer de sincronización para nuevos clientes
-- Compensación de latencia adaptativa
+Motor de sincronización basado en sample count (endpoint `/sync`, metadatos). **No forma parte del pipeline de bytes de `/stream`**: el audio HTTP sale del fan-out descrito arriba. `getSynchronizedChunk` queda disponible para extensiones futuras (p. ej. alineación multi-sala).
 
 ---
 
@@ -62,7 +66,7 @@ Motor de sincronización basado en sample count:
 ### 3.1 Buffer Circular Lock-Free
 **Problema**: El audio thread no puede bloquearse. Cualquier lock en `processBlock()` puede causar dropout.
 
-**Solución**: Usar `juce::AbstractFifo` para permitir escritura y lectura concurrentes sin locks.
+**Solución**: Usar `juce::AbstractFifo` con **un escritor** (audio thread) y **un lector** (hilo broadcast). Entre lectura y navegadores se inserta fan-out con colas por cliente (fuera del hilo de audio).
 
 ### 3.2 Servidor HTTP Embebido
 El servidor HTTP vive dentro del plugin, eliminando dependencias externas y haciendo el sistema autocontenido.
@@ -78,12 +82,13 @@ PCM 16-bit little-endian interleaved sobre HTTP chunked, garantizando compatibil
 ## 4. Estado del Proyecto
 
 ### Completado
-- ✅ AudioBufferManager (lock-free)
+- ✅ AudioBufferManager (lock-free, SPSC + fan-out hacia N clientes)
 - ✅ Captura DAW básica
-- ✅ NetworkStreamer (servidor HTTP, múltiples clientes)
-- ✅ SynchronizationEngine base
+- ✅ NetworkStreamer (servidor HTTP, hilo broadcast, colas PCM por cliente)
+- ✅ SynchronizationEngine base (metadatos `/sync`; flujo `/stream` documentado)
 - ✅ Compilación (VST3, AU, Standalone)
 - ✅ Interfaz web con reproductor
+- ✅ Editor del plugin: ocupación del buffer según muestras listas para streaming (no `freeSpace` del FIFO); contador de clientes que baja al desconectar (marcado `isActive` al salir de cualquier camino de `ClientWorker::run` y limpieza de hilos en cada ciclo de aceptación)
 
 ### Pendientes (no críticos)
 - OPUS encoder (compresión)
@@ -98,7 +103,7 @@ PCM 16-bit little-endian interleaved sobre HTTP chunked, garantizando compatibil
 | Framework | JUCE 8.0.10 |
 | Compilador | Xcode (macOS) |
 | Targets | VST3, AU, Standalone |
-| Buffer | 144,000 samples (~3s @ 48kHz) |
+| Buffer circular | 72,000 samples (~1,5 s @ 48 kHz) |
 | Puerto HTTP | 8080 |
 | Canales | Estéreo |
 | Formato salida | PCM 16-bit |

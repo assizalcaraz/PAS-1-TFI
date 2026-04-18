@@ -20,7 +20,8 @@
     Gestor de buffers de audio lock-free para streaming.
     
     Permite escribir desde el audio thread (processBlock) y leer desde
-    el network thread sin necesidad de locks, usando juce::AbstractFifo.
+    un único hilo consumidor (fan-out de red) sin locks en el FIFO,
+    usando juce::AbstractFifo (contrato SPSC: un escritor, un lector).
     
     Características:
     - Buffer circular lock-free

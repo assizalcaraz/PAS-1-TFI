@@ -34,17 +34,19 @@ struct SynchronizedAudioChunk
 
 //==============================================================================
 /**
-    Motor de sincronización sample-accurate.
-    
+    Motor de sincronización sample-accurate (metadatos / extensión futura).
+
+    El flujo HTTP de audio en `/stream` **no** pasa por este motor: el byte-stream
+    sale del `AudioBufferManager` vía un único hilo de fan-out hacia cada cliente.
+    Aquí se exponen timestamps y endpoint `/sync` para alineación o diagnóstico.
+    `getSynchronizedChunk()` no está cableado al servidor HTTP actual; reservado
+    para sincronización multi-cliente avanzada sin duplicar lecturas del FIFO.
+
     Características:
     - Timestamps basados en contador de samples (no wall-clock)
-    - Buffer de sincronización para nuevos clientes
-    - Compensación adaptativa de latencia de red
+    - Buffer de sincronización para nuevos clientes (si se alimenta el motor)
+    - Compensación adaptativa de latencia de red (planeada)
     - Protocolo maestro-esclavo (servidor = maestro)
-    
-    El servidor mantiene un buffer de los últimos N chunks de audio
-    con sus timestamps, permitiendo que nuevos clientes se sincronicen
-    desde un punto conocido en el tiempo.
 */
 class SynchronizationEngine
 {

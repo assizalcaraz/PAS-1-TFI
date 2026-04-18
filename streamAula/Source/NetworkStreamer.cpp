@@ -10,9 +10,14 @@
 #include "NetworkStreamer.h"
 #include "JuceHeader.h" // Para juce::Logger
 #include <signal.h> // Para manejar SIGPIPE
-#include <cstring> // Para std::memcpy
-#include <cmath> // Para std::sqrt (RMS)
-#include <cstdint> // Para int16_t
+#include <algorithm>
+#include <cmath>
+#include <cstdint>
+#include <chrono>
+#include <cstring>
+#include <mutex>
+#include <utility>
+#include <vector>
 
 // BinaryData.h se genera automáticamente por Projucer cuando se agregan archivos a Binary Resources
 // Incluir siempre - Projucer lo genera automáticamente
@@ -25,41 +30,195 @@ static inline juce::String U8(const char* utf8)
     return juce::String(juce::CharPointer_UTF8(utf8)); 
 }
 
-// Helper para construir strings UTF-8 desde bytes individuales (evita problemas con \x que consume múltiples dígitos)
-static inline juce::String U8_BYTES(const uint8_t* bytes, size_t count)
+/** Escribe todos los bytes al socket (StreamingSocket puede hacer escrituras parciales). */
+static bool writeAllSocketBytes (juce::StreamingSocket& sock, const void* data, int totalBytes)
 {
-    juce::MemoryBlock mb(bytes, count);
-    return juce::String(juce::CharPointer_UTF8(static_cast<const char*>(mb.getData())));
+    if (totalBytes <= 0)
+        return true;
+
+    const auto* bytes = static_cast<const char*> (data);
+    int done = 0;
+
+    while (done < totalBytes)
+    {
+        const int n = sock.write (bytes + done, totalBytes - done);
+
+        if (n < 0)
+            return false;
+
+        if (n == 0)
+            juce::Thread::sleep (1);
+
+        done += n;
+    }
+
+    return true;
 }
+
+//==============================================================================
+void PerClientAudioQueue::pushMove (std::vector<int16_t>&& interleavedPcm)
+{
+    if (shutdown.load (std::memory_order_acquire))
+        return;
+
+    {
+        std::lock_guard<std::mutex> g (mtx);
+
+        if (shutdown.load (std::memory_order_acquire))
+            return;
+
+        while (chunks.size() >= (size_t) maxQueuedChunks)
+            chunks.pop_front();
+
+        chunks.push_back (std::move (interleavedPcm));
+    }
+
+    cv.notify_one();
+}
+
+bool PerClientAudioQueue::popChunk (std::vector<int16_t>& out, int timeoutMs)
+{
+    std::unique_lock<std::mutex> lk (mtx);
+
+    cv.wait_for (lk,
+                 std::chrono::milliseconds (timeoutMs),
+                 [this]
+                 {
+                     return ! chunks.empty()
+                            || shutdown.load (std::memory_order_acquire);
+                 });
+
+    if (chunks.empty())
+        return false;
+
+    out = std::move (chunks.front());
+    chunks.pop_front();
+    return true;
+}
+
+void PerClientAudioQueue::signalShutdown() noexcept
+{
+    {
+        std::lock_guard<std::mutex> g (mtx);
+        shutdown.store (true, std::memory_order_release);
+    }
+
+    cv.notify_all();
+}
+
+//==============================================================================
+struct AudioBroadcastThread : public juce::Thread
+{
+    NetworkStreamer& owner;
+    AudioBufferManager* bm;
+
+    AudioBroadcastThread (NetworkStreamer& o, AudioBufferManager* b)
+        : juce::Thread ("StreamAudioFanout"), owner (o), bm (b)
+    {
+    }
+
+    void run() override
+    {
+        const int chunkSize = 512;
+        juce::AudioBuffer<float> floatChunk;
+
+        while (! threadShouldExit())
+        {
+            if (! owner.isAudioBroadcastServiceRunning())
+            {
+                juce::Thread::sleep (20);
+                continue;
+            }
+
+            if (bm == nullptr)
+            {
+                juce::Thread::sleep (20);
+                continue;
+            }
+
+            auto queues = owner.snapshotStreamingQueues();
+
+            if (queues.empty())
+            {
+                juce::Thread::sleep (15);
+                continue;
+            }
+
+            int nCh = bm->getNumChannels();
+
+            if (nCh < 1)
+                nCh = 1;
+
+            if (nCh > 2)
+                nCh = 2;
+
+            if (bm->getAvailableSamples() < chunkSize)
+            {
+                juce::Thread::sleep (2);
+                continue;
+            }
+
+            floatChunk.setSize (nCh, chunkSize, false, false, true);
+
+            if (! bm->readFromBuffer (floatChunk, chunkSize))
+            {
+                juce::Thread::sleep (2);
+                continue;
+            }
+
+            std::vector<int16_t> pcm ((size_t) (chunkSize * nCh));
+
+            for (int s = 0; s < chunkSize; ++s)
+                for (int c = 0; c < nCh; ++c)
+                {
+                    float x = floatChunk.getSample (c, s);
+                    x = juce::jlimit (-1.0f, 1.0f, x);
+                    pcm[(size_t) (s * nCh + c)] = (int16_t) juce::jlimit (-32768, 32767,
+                                                                          juce::roundToInt (x * 32767.0f));
+                }
+
+            for (auto& q : queues)
+                if (q != nullptr)
+                    q->pushMove (std::vector<int16_t> (pcm));
+
+            const double sr = juce::jmax (1.0, bm->getSampleRate());
+            const int pacingMs = juce::jlimit (1, 35, (int) std::lround (1000.0 * (double) chunkSize / sr));
+            juce::Thread::sleep (pacingMs);
+        }
+    }
+};
 
 //==============================================================================
 // ClientWorker Implementation
 //==============================================================================
 
-ClientWorker::ClientWorker(juce::StreamingSocket* clientSocket,
-                           AudioBufferManager* bufferManager,
-                           SynchronizationEngine* syncEngine)
-    : juce::Thread("ClientWorker"),
-      clientSocket(clientSocket),
-      audioBufferManager(bufferManager),
-      synchronizationEngine(syncEngine),
-      connectionTime(juce::Time::getCurrentTime())
+ClientWorker::ClientWorker (juce::StreamingSocket* socket,
+                            AudioBufferManager* bufferManager,
+                            SynchronizationEngine* syncEngine,
+                            NetworkStreamer* serverOwner)
+    : juce::Thread ("ClientWorker"),
+      clientSocket (std::unique_ptr<juce::StreamingSocket> (socket)),
+      audioBufferManager (bufferManager),
+      synchronizationEngine (syncEngine),
+      ownerStreamer (serverOwner),
+      connectionTime (juce::Time::getCurrentTime())
 {
-    jassert(clientSocket != nullptr);
-    jassert(bufferManager != nullptr);
-    
-    // Generar ID único para este cliente
-    clientId = juce::String::formatted("client_%lld", connectionTime.toMilliseconds());
+    jassert (socket != nullptr);
+    jassert (bufferManager != nullptr);
+    jassert (serverOwner != nullptr);
+
+    clientId = juce::String::formatted ("client_%lld", connectionTime.toMilliseconds());
 }
 
 ClientWorker::~ClientWorker()
 {
     stopStreaming();
-    stopThread(2000);
-    
+    stopThread (2000);
+
     if (clientSocket != nullptr)
     {
         clientSocket->close();
+        clientSocket.reset();
     }
 }
 
@@ -80,7 +239,16 @@ StreamingClient ClientWorker::getClientInfo() const
 
 void ClientWorker::run()
 {
-    if (clientSocket == nullptr || !clientSocket->isConnected())
+    // Cualquier salida de run() (return temprano o fin normal) debe marcar inactivo;
+    // si no, getNumClients() sigue contando hilos ya cerrados.
+    struct MarkInactiveOnExit
+    {
+        ClientWorker& w;
+        explicit MarkInactiveOnExit (ClientWorker& x) : w (x) {}
+        ~MarkInactiveOnExit() { w.isActive = false; }
+    } markInactive { *this };
+
+    if (clientSocket == nullptr || ! clientSocket->isConnected())
         return;
     
     debugLog("ClientWorker: Thread started for client: " + clientId);
@@ -203,7 +371,6 @@ void ClientWorker::run()
     }
     
     debugLog("ClientWorker: Thread finished for client: " + clientId);
-    isActive = false;
 }
 
 void ClientWorker::processHttpRequest(const juce::String& request)
@@ -237,128 +404,60 @@ void ClientWorker::processHttpRequest(const juce::String& request)
         }
         
         debugLog("ClientWorker: Respuesta HTTP enviada, iniciando loop de streaming...");
-        
-        // Descartar datos antiguos del buffer para nuevos clientes
-        if (audioBufferManager != nullptr)
-        {
-            int availableSamples = audioBufferManager->getAvailableSamples();
-            const int targetBufferSize = 1024;
-            
-            if (availableSamples > targetBufferSize)
-            {
-                int samplesToDiscard = availableSamples - targetBufferSize;
-                juce::AudioBuffer<float> discardBuffer;
-                discardBuffer.setSize(audioBufferManager->getNumChannels(), samplesToDiscard, false, false, true);
-                
-                while (audioBufferManager->getAvailableSamples() > targetBufferSize)
-                {
-                    int currentAvailable = audioBufferManager->getAvailableSamples();
-                    int toDiscard = juce::jmin(currentAvailable - targetBufferSize, discardBuffer.getNumSamples());
-                    if (toDiscard > 0)
-                    {
-                        discardBuffer.setSize(audioBufferManager->getNumChannels(), toDiscard, false, false, true);
-                        audioBufferManager->readFromBuffer(discardBuffer, toDiscard);
-                    }
-                    else
-                    {
-                        break;
-                    }
-                }
-                
-                #if JUCE_DEBUG
-                juce::String skipMsg("ClientWorker: Cliente nuevo - descartados ");
-                skipMsg += juce::String(samplesToDiscard);
-                skipMsg += U8(" samples antiguos");
-                debugLog(skipMsg);
-                #endif
-            }
-        }
-        
-        // Bucle de streaming
-        const int chunkSize = 1024;
-        int chunksSent = 0;
-        
+
         int numChannels = 2;
-        int sampleRate = 44100;
+
         if (audioBufferManager != nullptr)
         {
             numChannels = audioBufferManager->getNumChannels();
-            sampleRate = audioBufferManager->getSampleRate();
-            
-            juce::String configMsg = U8("ClientWorker: Configuraci\xc3\xb3n - canales: ");
-            configMsg += juce::String(numChannels);
-            configMsg += ", sampleRate: ";
-            configMsg += juce::String(sampleRate);
-            debugLog(configMsg);
+
+            if (numChannels < 1)
+                numChannels = 1;
+
+            if (numChannels > maxChannelsSupported)
+                numChannels = maxChannelsSupported;
         }
-        
-        while (!threadShouldExit() && !shouldStop.load() && clientSocket->isConnected())
+
+        if (ownerStreamer == nullptr)
         {
-            if (audioBufferManager != nullptr)
-            {
-                int availableSamples = audioBufferManager->getAvailableSamples();
-                
-                bool gotChunk = false;
-                
-                if (availableSamples >= chunkSize)
-                {
-                    if (synchronizationEngine != nullptr)
-                    {
-                        gotChunk = synchronizationEngine->getSynchronizedChunk(audioChunk, chunkSize, 0);
-                    }
-                    else
-                    {
-                        gotChunk = audioBufferManager->readFromBuffer(audioChunk, chunkSize);
-                    }
-                }
-                
-                if (gotChunk && audioChunk.getNumSamples() > 0)
-                {
-                    sendAudioToClient(audioChunk);
-                    chunksSent++;
-                    lastSampleSent += audioChunk.getNumSamples();
-                    
-                    // Control de velocidad adaptativo
-                    int freeSpace = audioBufferManager->getFreeSpace();
-                    int bufferSize = audioBufferManager->getBufferSize();
-                    double latencyMs = (double)availableSamples / sampleRate * 1000.0;
-                    double chunkDurationSeconds = (double)chunkSize / sampleRate;
-                    int sleepMs = (int)(chunkDurationSeconds * 1000.0);
-                    
-                    if (latencyMs > 500.0) {
-                        sleepMs = (int)(sleepMs * 0.05);
-                    } else if (latencyMs > 300.0) {
-                        sleepMs = (int)(sleepMs * 0.2);
-                    } else if (latencyMs > 200.0) {
-                        sleepMs = (int)(sleepMs * 0.5);
-                    } else if (latencyMs < 100.0) {
-                        sleepMs = (int)(sleepMs * 1.2);
-                    }
-                    
-                    if (sleepMs > 0 && sleepMs < 25) {
-                        juce::Thread::sleep(sleepMs);
-                    }
-                }
-                else
-                {
-                    // No hay datos disponibles, enviar silencio
-                    audioChunk.setSize(numChannels, chunkSize, false, false, true);
-                    audioChunk.clear();
-                    sendAudioToClient(audioChunk);
-                    chunksSent++;
-                    juce::Thread::sleep(10);
-                }
-            }
-            else
-            {
-                // AudioBufferManager no disponible, enviar silencio
-                audioChunk.setSize(numChannels, chunkSize, false, false, true);
-                audioChunk.clear();
-                sendAudioToClient(audioChunk);
-                chunksSent++;
-                juce::Thread::sleep(10);
-            }
+            debugLog("ClientWorker: ownerStreamer es nullptr, abortando /stream");
+            return;
         }
+
+        auto streamQueue = std::make_shared<PerClientAudioQueue>();
+        ownerStreamer->registerStreamingQueue (streamQueue);
+
+        int chunksSent = 0;
+
+        while (! threadShouldExit() && ! shouldStop.load() && clientSocket->isConnected())
+        {
+            std::vector<int16_t> chunk;
+
+            if (! streamQueue->popChunk (chunk, 200))
+            {
+                if (shouldStop.load() || streamQueue->isShutdown())
+                    break;
+
+                continue;
+            }
+
+            if (chunk.empty())
+                continue;
+
+            const int totalInterleaved = (int) chunk.size();
+
+            if (totalInterleaved % numChannels != 0)
+                continue;
+
+            const int frames = totalInterleaved / numChannels;
+
+            sendInt16InterleavedChunk (chunk.data(), totalInterleaved, numChannels);
+            chunksSent += 1;
+            lastSampleSent += frames;
+        }
+
+        ownerStreamer->unregisterStreamingQueue (streamQueue.get());
+        streamQueue->signalShutdown(); // despierta popChunk si quedaba bloqueado
         
         // Enviar chunk final
         juce::String finalChunk = "0\r\n\r\n";
@@ -600,50 +699,37 @@ void ClientWorker::processHttpRequest(const juce::String& request)
     }
 }
 
-void ClientWorker::sendAudioToClient(const juce::AudioBuffer<float>& audio)
+void ClientWorker::sendInt16InterleavedChunk (const int16_t* data, int numInterleavedSamples, int numChannels)
 {
-    if (clientSocket == nullptr || !clientSocket->isConnected())
+    if (clientSocket == nullptr || ! clientSocket->isConnected() || data == nullptr || numInterleavedSamples <= 0)
         return;
-    
-    const int numSamples = audio.getNumSamples();
-    const int numChannels = audio.getNumChannels();
-    const int dataSize = numSamples * numChannels * sizeof(int16_t);
-    
-    juce::String chunkHeader = juce::String::toHexString(dataSize).toLowerCase() + "\r\n";
-    
-    if (!clientSocket->isConnected())
+
+    juce::ignoreUnused (numChannels);
+
+    const int dataSize = numInterleavedSamples * (int) sizeof (int16_t);
+
+    juce::String chunkHeader = juce::String::toHexString (dataSize).toLowerCase() + "\r\n";
+
+    if (! clientSocket->isConnected())
         return;
-    
-    int bytesWritten = clientSocket->write(chunkHeader.toRawUTF8(), (int)chunkHeader.length());
-    if (bytesWritten < 0)
+
+    auto& sock = *clientSocket;
+
+    if (! writeAllSocketBytes (sock, chunkHeader.toRawUTF8(), (int) chunkHeader.getNumBytesAsUTF8()))
         return;
-    
-    // Convertir float32 a int16 (interleaved)
-    juce::HeapBlock<int16_t> interleavedInt16(numSamples * numChannels);
-    for (int sample = 0; sample < numSamples; ++sample)
-    {
-        for (int channel = 0; channel < numChannels; ++channel)
-        {
-            float sampleValue = audio.getSample(channel, sample);
-            sampleValue = juce::jlimit(-1.0f, 1.0f, sampleValue);
-            int16_t int16Value = (int16_t)(sampleValue * 32767.0f);
-            interleavedInt16[sample * numChannels + channel] = int16Value;
-        }
-    }
-    
-    if (!clientSocket->isConnected())
+
+    if (! clientSocket->isConnected())
         return;
-    
-    bytesWritten = clientSocket->write(interleavedInt16.getData(), dataSize);
-    if (bytesWritten < 0)
+
+    if (! writeAllSocketBytes (sock, data, dataSize))
         return;
-    
+
     juce::String chunkEnd = "\r\n";
-    
-    if (!clientSocket->isConnected())
+
+    if (! clientSocket->isConnected())
         return;
-    
-    clientSocket->write(chunkEnd.toRawUTF8(), (int)chunkEnd.length());
+
+    writeAllSocketBytes (sock, chunkEnd.toRawUTF8(), (int) chunkEnd.getNumBytesAsUTF8());
 }
 
 void ClientWorker::debugLog(const juce::String& message) const
@@ -689,14 +775,13 @@ bool ClientWorker::isValidHttpText(const void* data, int size)
 // NetworkStreamer Implementation
 //==============================================================================
 
-NetworkStreamer::NetworkStreamer(AudioBufferManager* bufferManager, 
-                                 SynchronizationEngine* syncEngine,
-                                 int port)
-    : juce::Thread("NetworkStreamer"),
-      audioBufferManager(bufferManager),
-      synchronizationEngine(syncEngine),
-      serverPort(port),
-      serverSocket(nullptr)
+NetworkStreamer::NetworkStreamer (AudioBufferManager* bufferManager,
+                                  SynchronizationEngine* syncEngine,
+                                  int port)
+    : juce::Thread ("NetworkStreamer"),
+      audioBufferManager (bufferManager),
+      synchronizationEngine (syncEngine),
+      serverPort (port)
 {
     jassert(bufferManager != nullptr);
     
@@ -765,18 +850,31 @@ bool NetworkStreamer::startServer()
     
     if (listenerCreated)
     {
-        serverActive.store(true);
-        shouldStop.store(false);
-        
-        juce::String successMsg = juce::String::formatted("NetworkStreamer: Servidor iniciado correctamente en puerto %d", serverPort);
-        debugLog(successMsg);
-        
-        // Iniciar thread
+        serverActive.store (true);
+        shouldStop.store (false);
+        broadcastServiceRunning.store (true);
+
+        juce::String successMsg = juce::String::formatted ("NetworkStreamer: Servidor iniciado correctamente en puerto %d", serverPort);
+        debugLog (successMsg);
+
+        jassert (audioBroadcastThread == nullptr);
+        audioBroadcastThread.reset (new AudioBroadcastThread (*this, audioBufferManager));
+
+        if (! audioBroadcastThread->startThread())
+        {
+            broadcastServiceRunning.store (false);
+            audioBroadcastThread.reset();
+            serverActive.store (false);
+            delete serverSocket;
+            serverSocket = nullptr;
+            juce::Logger::writeToLog ("NetworkStreamer: ERROR - No se pudo iniciar AudioBroadcastThread");
+            return false;
+        }
+
         startThread();
-        
-        // Dar un momento para que el thread se inicie
-        juce::Thread::sleep(100);
-        
+
+        juce::Thread::sleep (100);
+
         return true;
     }
     else
@@ -794,49 +892,54 @@ bool NetworkStreamer::startServer()
 //==============================================================================
 void NetworkStreamer::stopServer()
 {
-    if (!serverActive.load())
+    if (! serverActive.load())
         return;
-    
-    shouldStop.store(true);
-    
-    // Detener todos los ClientWorker threads
+
+    broadcastServiceRunning.store (false);
+    signalAllStreamQueuesShutdown();
+
+    if (audioBroadcastThread != nullptr)
     {
-        const juce::ScopedLock lock(clientsLock);
-        for (auto& client : clients)
-        {
-            if (client != nullptr)
-            {
-                client->stopStreaming();
-            }
-        }
+        audioBroadcastThread->signalThreadShouldExit();
+        audioBroadcastThread->stopThread (4000);
+        audioBroadcastThread.reset();
     }
-    
-    // Cerrar socket para despertar el thread
+
+    shouldStop.store (true);
+
+    {
+        const juce::ScopedLock lock (clientsLock);
+
+        for (auto& client : clients)
+            if (client != nullptr)
+                client->stopStreaming();
+    }
+
     if (serverSocket != nullptr)
     {
         serverSocket->close();
         delete serverSocket;
         serverSocket = nullptr;
     }
-    
-    // Esperar a que el thread termine
-    stopThread(2000);
-    
-    // Esperar a que todos los ClientWorker threads terminen
+
+    stopThread (2000);
+
     {
-        const juce::ScopedLock lock(clientsLock);
+        const juce::ScopedLock lock (clientsLock);
+
         for (auto& client : clients)
-        {
             if (client != nullptr)
-            {
-                client->stopThread(1000);
-            }
-        }
+                client->stopThread (1000);
+
         clients.clear();
     }
-    
-    // Limpiar
-    serverActive.store(false);
+
+    {
+        const juce::ScopedLock lock (streamingQueuesLock);
+        streamingQueues.clear();
+    }
+
+    serverActive.store (false);
 }
 
 //==============================================================================
@@ -876,6 +979,47 @@ std::vector<StreamingClient> NetworkStreamer::getClients() const
 }
 
 //==============================================================================
+void NetworkStreamer::registerStreamingQueue (const std::shared_ptr<PerClientAudioQueue>& q)
+{
+    if (q == nullptr)
+        return;
+
+    const juce::ScopedLock sl (streamingQueuesLock);
+    streamingQueues.push_back (q);
+}
+
+void NetworkStreamer::unregisterStreamingQueue (PerClientAudioQueue* q)
+{
+    if (q == nullptr)
+        return;
+
+    const juce::ScopedLock sl (streamingQueuesLock);
+    streamingQueues.erase (std::remove_if (streamingQueues.begin(), streamingQueues.end(),
+                                           [q] (const std::shared_ptr<PerClientAudioQueue>& p) { return p.get() == q; }),
+                           streamingQueues.end());
+}
+
+std::vector<std::shared_ptr<PerClientAudioQueue>> NetworkStreamer::snapshotStreamingQueues() const
+{
+    const juce::ScopedLock sl (streamingQueuesLock);
+    return streamingQueues;
+}
+
+bool NetworkStreamer::isAudioBroadcastServiceRunning() const noexcept
+{
+    return broadcastServiceRunning.load (std::memory_order_acquire);
+}
+
+void NetworkStreamer::signalAllStreamQueuesShutdown()
+{
+    const auto qs = snapshotStreamingQueues();
+
+    for (auto& q : qs)
+        if (q != nullptr)
+            q->signalShutdown();
+}
+
+//==============================================================================
 void NetworkStreamer::cleanupFinishedWorkers()
 {
     const juce::ScopedLock lock(clientsLock);
@@ -906,8 +1050,6 @@ void NetworkStreamer::run()
     juce::String readyMsg = juce::String::formatted("NetworkStreamer: Socket listo, esperando conexiones en puerto %d", serverPort);
     debugLog(readyMsg);
     
-    int connectionCount = 0;
-    
     while (!threadShouldExit() && !shouldStop.load())
     {
         if (serverSocket == nullptr)
@@ -915,13 +1057,9 @@ void NetworkStreamer::run()
             juce::Thread::sleep(100);
             continue;
         }
-        
-        // Limpiar threads terminados periódicamente (cada 10 conexiones)
-        if (connectionCount % 10 == 0)
-        {
-            cleanupFinishedWorkers();
-        }
-        
+
+        cleanupFinishedWorkers();
+
         // waitForNextConnection() bloquea indefinidamente hasta que llegue una conexión
         juce::StreamingSocket* clientSocket = serverSocket->waitForNextConnection();
         
@@ -939,9 +1077,10 @@ void NetworkStreamer::run()
         if (clientSocket != nullptr && clientSocket->isConnected())
         {
             // Crear nuevo ClientWorker para manejar esta conexión
-            auto worker = std::make_unique<ClientWorker>(clientSocket, 
-                                                         audioBufferManager, 
-                                                         synchronizationEngine);
+            auto worker = std::make_unique<ClientWorker> (clientSocket,
+                                                         audioBufferManager,
+                                                         synchronizationEngine,
+                                                         this);
             
             // Agregar a la lista de clientes
             {
@@ -952,9 +1091,7 @@ void NetworkStreamer::run()
             // Iniciar el thread del worker
             ClientWorker* workerPtr = clients.back().get();
             workerPtr->startThread();
-            
-            connectionCount++;
-            
+
             juce::String connMsg = juce::String::formatted("NetworkStreamer: Nueva conexion aceptada (total: %d)", 
                                                            (int)clients.size());
             debugLog(connMsg);

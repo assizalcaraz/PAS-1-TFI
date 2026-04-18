@@ -60,9 +60,12 @@ void StreamAulaAudioProcessorEditor::paint (juce::Graphics& g)
         int bufferSize = bufferManager->getBufferSize();
         double sampleRate = bufferManager->getSampleRate();
         int numChannels = bufferManager->getNumChannels();
-        
-        // Calcular porcentaje de uso
-        float usagePercent = (float)(bufferSize - freeSpace) / (float)bufferSize * 100.0f;
+
+        // Ocupación = muestras listas para el lector (fan-out), no (bufferSize - freeSpace):
+        // con FIFO vacío JUCE suele reportar freeSpace == bufferSize - 1 (p. ej. 71999),
+        // lo que daba ~0% fijo aunque el stream esté sano.
+        const float usagePercent = juce::jlimit (0.0f, 100.0f,
+                                                 (float) availableSamples / (float) juce::jmax (1, bufferSize) * 100.0f);
         
         // Estado del buffer
         juce::String statusText;
@@ -79,9 +82,9 @@ void StreamAulaAudioProcessorEditor::paint (juce::Graphics& g)
         
         // Información detallada
         juce::String infoText;
-        infoText << "Samples disponibles: " << availableSamples << "\n";
-        infoText << "Espacio libre: " << freeSpace << "\n";
-        infoText << "Uso del buffer: " << juce::String::formatted("%.1f", usagePercent) << "%\n";
+        infoText << U8("Muestras listas (streaming): ") << availableSamples << "\n";
+        infoText << U8("Espacio libre p/escritura (host): ") << freeSpace << "\n";
+        infoText << U8("Ocupaci\xc3\xb3n (datos pendientes): ") << juce::String::formatted ("%.1f", usagePercent) << "%\n";
         infoText << "Total samples procesados: " << sampleCount << "\n";
         infoText << "Sample Rate: " << (int)sampleRate << " Hz\n";
         infoText << U8("Canales: ") << numChannels << "\n";

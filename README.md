@@ -20,7 +20,7 @@ El plugin funciona como una herramienta de captura y transmisión de audio del a
 - **Plugin VST3/AU/AAX** para integración con DAWs (Reaper, Logic Pro, etc.)
 - **Servidor HTTP embebido** - el plugin sirve su propia interfaz web
 - **Streaming a múltiples clientes** simultáneos
-- **Gestión lock-free de buffers** de audio (usando `juce::AbstractFifo`)
+- **Gestión lock-free de buffers** de audio (`juce::AbstractFifo`, un escritor y un lector + fan-out a N clientes)
 - **Sincronización sample-accurate** basada en contador de samples
 - **Interfaz web** con reproductor de audio integrado
 
@@ -35,10 +35,13 @@ DAW (pista de audio)
 PluginProcessor::processBlock()  ← captura audio
        │
        ▼
-AudioBufferManager (buffer circular lock-free)
+AudioBufferManager (buffer circular lock-free, SPSC)
        │
        ▼
-NetworkStreamer (servidor HTTP :8080)
+NetworkStreamer (servidor HTTP :8080 + hilo fan-out único lector)
+       │
+       ▼
+Colas PCM por cliente → sockets `/stream`
        │
        ├── /       → Interfaz web con reproductor
        ├── /stream → Stream de audio PCM
@@ -58,8 +61,8 @@ NetworkStreamer (servidor HTTP :8080)
 
 ## Decisiones de Diseño
 
-### Buffer Circular Lock-Free
-El audio thread no puede bloquearse. Se utiliza `juce::AbstractFifo` para permitir escritura y lectura concurrentes sin locks, evitando dropouts en el procesamiento de audio.
+### Buffer circular lock-free (SPSC + fan-out)
+El audio thread no puede bloquearse. `juce::AbstractFifo` enlaza **un** hilo escritor (`processBlock`) con **un** hilo lector (broadcast). Ese lector replica PCM hacia colas por cliente; cada `ClientWorker` solo escribe al socket, evitando múltiples lectores sobre el mismo FIFO.
 
 ### Servidor HTTP Embebido
 El servidor HTTP vive dentro del plugin, eliminando dependencias externas y haciendo el sistema autocontenido.
