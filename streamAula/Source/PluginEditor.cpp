@@ -93,7 +93,7 @@ void StreamAulaAudioProcessorEditor::paint (juce::Graphics& g)
                  << juce::String::formatted ("%.0f", sampleRateHost) << U8(" Hz\n");
         if (std::abs (sampleRateHost - sampleRateBuf) > 0.5)
             infoText << U8("(!) Buffer interno reporta ") << juce::String::formatted ("%.0f", sampleRateBuf)
-                     << U8(" Hz (no deber\xc3\xada ocurrir; reinicie reproducci\xc3\xb3n)\n");
+                     << U8(" Hz (no deber\xc3\xad""a ocurrir; reinicie reproducci\xc3\xb3n)\n");
         infoText << U8("Canales: ") << numChannels << "\n";
         infoText << U8("Tama\xc3\xb1o buffer: ") << bufferSize << U8(" muestras (~")
                  << juce::String::formatted ("%.2f", bufferSize / sampleRateHost) << U8(" s)");
