@@ -30,7 +30,7 @@ Objetivo: validar el modelo **un lector del `AudioBufferManager` + fan-out** y l
 
 1. Con varias pestañas en `/stream`, observar en la ventana del plugin **“Clientes conectados”**.
 2. Cerrar una o más pestañas.
-3. **Esperado:** el número baja acorde a las desconexiones (no queda inflado por hilos ya finalizados que seguían marcados como activos).
+3. **Esperado:** el número baja acorde a las desconexiones (el conteo usa el estado real del hilo `ClientWorker`, no un `bool` compartido sin sincronización con el timer del editor).
 
 ### D — Throttling (cliente lento)
 

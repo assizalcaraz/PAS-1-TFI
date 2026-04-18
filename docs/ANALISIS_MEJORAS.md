@@ -17,7 +17,7 @@ Lista de comprobación manual: [`docs/PRUEBAS_STREAMING.md`](PRUEBAS_STREAMING.m
 ### Interfaz del plugin y telemetría (2026-04)
 
 - **Ocupación del buffer:** debe calcularse con `getAvailableSamples()` (datos pendientes para el lector de streaming). `getFreeSpace()` del `AbstractFifo` con cola casi vacía suele ser `bufferSize − 1` (p. ej. 71999), lo que hacía que `(bufferSize − freeSpace)` pareciera ~0 % fijo.
-- **Clientes conectados:** `getNumClients()` usa `isActive`; cualquier `return` temprano en `ClientWorker::run()` debe marcar inactivo (RAII al inicio de `run`) y conviene llamar a `cleanupFinishedWorkers()` en cada ciclo del aceptador para retirar hilos terminados de la lista.
+- **Clientes conectados:** `isClientActive()` debe basarse en `juce::Thread::isThreadRunning()` (API thread-safe de JUCE), no en un `bool` leído desde el timer del editor (condición de carrera). `push_back` + `startThread()` del worker deben hacerse bajo el mismo `clientsLock` para que el conteo no vea hilos aún no arrancados. `cleanupFinishedWorkers()` en cada ciclo del aceptador sigue retirando entradas ya terminadas.
 
 ---
 

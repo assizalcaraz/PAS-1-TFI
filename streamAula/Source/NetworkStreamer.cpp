@@ -181,9 +181,19 @@ struct AudioBroadcastThread : public juce::Thread
                 if (q != nullptr)
                     q->pushMove (std::vector<int16_t> (pcm));
 
+            // Pacing: dormir ~una ventana de tiempo real por chunk evita saturar TCP.
+            // Si el FIFO acumula mucho (productor más rápido que este ritmo), dormir poco
+            // para vaciar backlog y evitar que writeToBuffer falle en el hilo de audio.
             const double sr = juce::jmax (1.0, bm->getSampleRate());
             const int pacingMs = juce::jlimit (1, 35, (int) std::lround (1000.0 * (double) chunkSize / sr));
-            juce::Thread::sleep (pacingMs);
+            const int backlog = bm->getAvailableSamples();
+
+            if (backlog > chunkSize * 6)
+                juce::Thread::sleep (1);
+            else if (backlog > chunkSize * 3)
+                juce::Thread::sleep (juce::jmax (1, pacingMs / 3));
+            else
+                juce::Thread::sleep (pacingMs);
         }
     }
 };
@@ -233,21 +243,12 @@ StreamingClient ClientWorker::getClientInfo() const
     info.clientId = clientId;
     info.connectionTime = connectionTime;
     info.lastSampleSent = lastSampleSent;
-    info.isActive = isActive;
+    info.isActive = isThreadRunning();
     return info;
 }
 
 void ClientWorker::run()
 {
-    // Cualquier salida de run() (return temprano o fin normal) debe marcar inactivo;
-    // si no, getNumClients() sigue contando hilos ya cerrados.
-    struct MarkInactiveOnExit
-    {
-        ClientWorker& w;
-        explicit MarkInactiveOnExit (ClientWorker& x) : w (x) {}
-        ~MarkInactiveOnExit() { w.isActive = false; }
-    } markInactive { *this };
-
     if (clientSocket == nullptr || ! clientSocket->isConnected())
         return;
     
@@ -1082,15 +1083,11 @@ void NetworkStreamer::run()
                                                          synchronizationEngine,
                                                          this);
             
-            // Agregar a la lista de clientes
             {
-                const juce::ScopedLock lock(clientsLock);
-                clients.push_back(std::move(worker));
+                const juce::ScopedLock lock (clientsLock);
+                clients.push_back (std::move (worker));
+                clients.back()->startThread();
             }
-            
-            // Iniciar el thread del worker
-            ClientWorker* workerPtr = clients.back().get();
-            workerPtr->startThread();
 
             juce::String connMsg = juce::String::formatted("NetworkStreamer: Nueva conexion aceptada (total: %d)", 
                                                            (int)clients.size());

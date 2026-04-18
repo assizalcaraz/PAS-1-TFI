@@ -88,7 +88,8 @@ public:
 
     StreamingClient getClientInfo() const;
 
-    bool isClientActive() const noexcept { return isActive; }
+    /** true mientras el hilo del worker sigue en ejecución (válido entre hilos). */
+    bool isClientActive() const noexcept { return isThreadRunning(); }
 
     void stopStreaming();
 
@@ -103,7 +104,6 @@ private:
     juce::String clientId;
     juce::Time connectionTime;
     int64_t lastSampleSent{0};
-    bool isActive{true};
 
     static constexpr bool ENABLE_DEBUG_LOGS =
     #if JUCE_DEBUG

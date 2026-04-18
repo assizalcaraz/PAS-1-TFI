@@ -88,7 +88,7 @@ PCM 16-bit little-endian interleaved sobre HTTP chunked, garantizando compatibil
 - ✅ SynchronizationEngine base (metadatos `/sync`; flujo `/stream` documentado)
 - ✅ Compilación (VST3, AU, Standalone)
 - ✅ Interfaz web con reproductor
-- ✅ Editor del plugin: ocupación del buffer según muestras listas para streaming (no `freeSpace` del FIFO); contador de clientes que baja al desconectar (marcado `isActive` al salir de cualquier camino de `ClientWorker::run` y limpieza de hilos en cada ciclo de aceptación)
+- ✅ Editor del plugin: ocupación del buffer según muestras listas para streaming (no `freeSpace` del FIFO); contador de clientes coherente (`isThreadRunning()` + `startThread` bajo `clientsLock`) y pacing del broadcast adaptativo si el FIFO acumula backlog
 
 ### Pendientes (no críticos)
 - OPUS encoder (compresión)
