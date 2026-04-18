@@ -152,6 +152,9 @@ void StreamAulaAudioProcessorEditor::resized()
 //==============================================================================
 void StreamAulaAudioProcessorEditor::timerCallback()
 {
+    if (auto* networkStreamer = audioProcessor.getNetworkStreamer())
+        networkStreamer->purgeFinishedClients();
+
     // Actualizar la UI periódicamente para mostrar información actualizada del buffer
     repaint();
 }

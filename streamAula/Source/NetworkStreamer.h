@@ -115,7 +115,8 @@ private:
 
     void processHttpRequest (const juce::String& request);
 
-    void sendInt16InterleavedChunk (const int16_t* data, int numInterleavedSamples, int numChannels);
+    /** @return false si el socket ya no puede enviar (cliente desconectado o error de escritura). */
+    bool sendInt16InterleavedChunk (const int16_t* data, int numInterleavedSamples, int numChannels);
 
     void debugLog (const juce::String& message) const;
 
@@ -154,6 +155,9 @@ public:
     int getPort() const noexcept { return serverPort; }
 
     int getNumClients() const;
+
+    /** Quita de la lista los ClientWorker cuyo hilo ya terminó (p. ej. tras desconexión). Seguro desde el hilo de mensajes / UI. */
+    void purgeFinishedClients();
 
     std::vector<StreamingClient> getClients() const;
 

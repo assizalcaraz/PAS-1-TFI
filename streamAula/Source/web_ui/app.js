@@ -1,9 +1,12 @@
 // Obtener configuración del servidor
 let configAudio = { sampleRate: 44100, channels: 1, formato: 'pcm' };
 
+/** Opciones de fetch: evita respuestas cacheadas y no reutiliza conexiones de forma opaca entre pestañas. */
+const fetchNoCache = { cache: 'no-store' };
+
 async function obtenerConfig() {
     try {
-        const response = await fetch('/config');
+        const response = await fetch('/config', fetchNoCache);
         const config = await response.json();
         // El servidor envía "sampleRate" (camelCase), no "sample_rate"
         configAudio.sampleRate = config.sampleRate || config.sample_rate || 44100;
@@ -100,7 +103,7 @@ async function iniciarStreaming() {
         actualizarEstado('Conectando al servidor...', '#333');
         
         console.log('🔗 Iniciando conexión al stream...');
-        const response = await fetch('/stream');
+        const response = await fetch('/stream', fetchNoCache);
         if (!response.ok) {
             throw new Error('Error de conexión: ' + response.status);
         }

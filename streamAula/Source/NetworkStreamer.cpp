@@ -55,6 +55,15 @@ static bool writeAllSocketBytes (juce::StreamingSocket& sock, const void* data, 
     return true;
 }
 
+/** Cierra el TCP tras una respuesta HTTP corta para que el navegador no reutilice
+    la conexión (keep-alive) en el siguiente fetch; si no, el siguiente GET puede
+    quedar sin lector en el servidor y el cliente se queda en "Conectando". */
+static void closeSocketAfterShortHttpResponse (juce::StreamingSocket* sock) noexcept
+{
+    if (sock != nullptr)
+        sock->close();
+}
+
 //==============================================================================
 void PerClientAudioQueue::pushMove (std::vector<int16_t>&& interleavedPcm)
 {
@@ -386,7 +395,7 @@ void ClientWorker::processHttpRequest(const juce::String& request)
         
         juce::String response = "HTTP/1.1 200 OK\r\n";
         response << "Content-Type: application/octet-stream\r\n";
-        response << "Connection: keep-alive\r\n";
+        response << "Connection: close\r\n";
         response << "Transfer-Encoding: chunked\r\n";
         response << "Access-Control-Allow-Origin: *\r\n";
         response << "\r\n";
@@ -439,6 +448,9 @@ void ClientWorker::processHttpRequest(const juce::String& request)
                 if (shouldStop.load() || streamQueue->isShutdown())
                     break;
 
+                if (clientSocket != nullptr && ! clientSocket->isConnected())
+                    break;
+
                 continue;
             }
 
@@ -452,7 +464,9 @@ void ClientWorker::processHttpRequest(const juce::String& request)
 
             const int frames = totalInterleaved / numChannels;
 
-            sendInt16InterleavedChunk (chunk.data(), totalInterleaved, numChannels);
+            if (! sendInt16InterleavedChunk (chunk.data(), totalInterleaved, numChannels))
+                break;
+
             chunksSent += 1;
             lastSampleSent += frames;
         }
@@ -511,6 +525,7 @@ void ClientWorker::processHttpRequest(const juce::String& request)
         response << "Content-Type: application/json\r\n";
         response << "Content-Length: " << json.length() << "\r\n";
         response << "Access-Control-Allow-Origin: *\r\n";
+        response << "Connection: close\r\n";
         response << "\r\n";
         response << json;
         
@@ -518,8 +533,13 @@ void ClientWorker::processHttpRequest(const juce::String& request)
         {
             int bytesWritten = clientSocket->write(response.toRawUTF8(), (int)response.length());
             if (bytesWritten < 0)
+            {
+                closeSocketAfterShortHttpResponse (clientSocket.get());
                 return;
+            }
         }
+
+        closeSocketAfterShortHttpResponse (clientSocket.get());
     }
     else if (request.startsWith("GET /sync"))
     {
@@ -547,6 +567,7 @@ void ClientWorker::processHttpRequest(const juce::String& request)
         response << "Content-Type: application/json\r\n";
         response << "Content-Length: " << json.length() << "\r\n";
         response << "Access-Control-Allow-Origin: *\r\n";
+        response << "Connection: close\r\n";
         response << "\r\n";
         response << json;
         
@@ -554,8 +575,13 @@ void ClientWorker::processHttpRequest(const juce::String& request)
         {
             int bytesWritten = clientSocket->write(response.toRawUTF8(), (int)response.length());
             if (bytesWritten < 0)
+            {
+                closeSocketAfterShortHttpResponse (clientSocket.get());
                 return;
+            }
         }
+
+        closeSocketAfterShortHttpResponse (clientSocket.get());
     }
     else if (request.startsWith("GET /favicon.ico"))
     {
@@ -567,8 +593,13 @@ void ClientWorker::processHttpRequest(const juce::String& request)
         {
             int bytesWritten = clientSocket->write(response.toRawUTF8(), (int)response.length());
             if (bytesWritten < 0)
+            {
+                closeSocketAfterShortHttpResponse (clientSocket.get());
                 return;
+            }
         }
+
+        closeSocketAfterShortHttpResponse (clientSocket.get());
     }
     else if (request.startsWith("GET /app.js"))
     {
@@ -589,6 +620,8 @@ void ClientWorker::processHttpRequest(const juce::String& request)
                 clientSocket->write(response.toRawUTF8(), (int)response.length());
                 clientSocket->write(data, size);
             }
+
+            closeSocketAfterShortHttpResponse (clientSocket.get());
             return;
         }
         else
@@ -603,6 +636,8 @@ void ClientWorker::processHttpRequest(const juce::String& request)
             {
                 clientSocket->write(response.toRawUTF8(), (int)response.length());
             }
+
+            closeSocketAfterShortHttpResponse (clientSocket.get());
             return;
         }
     }
@@ -625,6 +660,8 @@ void ClientWorker::processHttpRequest(const juce::String& request)
                 clientSocket->write(response.toRawUTF8(), (int)response.length());
                 clientSocket->write(data, size);
             }
+
+            closeSocketAfterShortHttpResponse (clientSocket.get());
             return;
         }
         else
@@ -639,6 +676,8 @@ void ClientWorker::processHttpRequest(const juce::String& request)
             {
                 clientSocket->write(response.toRawUTF8(), (int)response.length());
             }
+
+            closeSocketAfterShortHttpResponse (clientSocket.get());
             return;
         }
     }
@@ -666,6 +705,8 @@ void ClientWorker::processHttpRequest(const juce::String& request)
                 clientSocket->write(response.toRawUTF8(), (int)response.length());
                 clientSocket->write(data, size);
             }
+
+            closeSocketAfterShortHttpResponse (clientSocket.get());
             return;
         }
         else
@@ -680,6 +721,8 @@ void ClientWorker::processHttpRequest(const juce::String& request)
             {
                 clientSocket->write(response.toRawUTF8(), (int)response.length());
             }
+
+            closeSocketAfterShortHttpResponse (clientSocket.get());
             return;
         }
     }
@@ -688,6 +731,7 @@ void ClientWorker::processHttpRequest(const juce::String& request)
         juce::String response = "HTTP/1.1 404 Not Found\r\n";
         response << "Content-Type: text/plain\r\n";
         response << "Content-Length: 13\r\n";
+        response << "Connection: close\r\n";
         response << "\r\n";
         response << "404 Not Found";
         
@@ -695,15 +739,20 @@ void ClientWorker::processHttpRequest(const juce::String& request)
         {
             int bytesWritten = clientSocket->write(response.toRawUTF8(), (int)response.length());
             if (bytesWritten < 0)
+            {
+                closeSocketAfterShortHttpResponse (clientSocket.get());
                 return;
+            }
         }
+
+        closeSocketAfterShortHttpResponse (clientSocket.get());
     }
 }
 
-void ClientWorker::sendInt16InterleavedChunk (const int16_t* data, int numInterleavedSamples, int numChannels)
+bool ClientWorker::sendInt16InterleavedChunk (const int16_t* data, int numInterleavedSamples, int numChannels)
 {
     if (clientSocket == nullptr || ! clientSocket->isConnected() || data == nullptr || numInterleavedSamples <= 0)
-        return;
+        return false;
 
     juce::ignoreUnused (numChannels);
 
@@ -712,25 +761,28 @@ void ClientWorker::sendInt16InterleavedChunk (const int16_t* data, int numInterl
     juce::String chunkHeader = juce::String::toHexString (dataSize).toLowerCase() + "\r\n";
 
     if (! clientSocket->isConnected())
-        return;
+        return false;
 
     auto& sock = *clientSocket;
 
     if (! writeAllSocketBytes (sock, chunkHeader.toRawUTF8(), (int) chunkHeader.getNumBytesAsUTF8()))
-        return;
+        return false;
 
     if (! clientSocket->isConnected())
-        return;
+        return false;
 
     if (! writeAllSocketBytes (sock, data, dataSize))
-        return;
+        return false;
 
     juce::String chunkEnd = "\r\n";
 
     if (! clientSocket->isConnected())
-        return;
+        return false;
 
-    writeAllSocketBytes (sock, chunkEnd.toRawUTF8(), (int) chunkEnd.getNumBytesAsUTF8());
+    if (! writeAllSocketBytes (sock, chunkEnd.toRawUTF8(), (int) chunkEnd.getNumBytesAsUTF8()))
+        return false;
+
+    return true;
 }
 
 void ClientWorker::debugLog(const juce::String& message) const
@@ -1018,6 +1070,12 @@ void NetworkStreamer::signalAllStreamQueuesShutdown()
     for (auto& q : qs)
         if (q != nullptr)
             q->signalShutdown();
+}
+
+//==============================================================================
+void NetworkStreamer::purgeFinishedClients()
+{
+    cleanupFinishedWorkers();
 }
 
 //==============================================================================
