@@ -109,6 +109,8 @@ PCM 16-bit little-endian interleaved sobre HTTP chunked, garantizando compatibil
 | Formato salida | PCM 16-bit |
 | Latencia objetivo | <20ms |
 
+**Nota (tasa de muestreo en el editor del plugin):** el valor mostrado es la tasa que el **host (DAW o standalone)** entrega en `prepareToPlay`. Si aparece 8000 Hz, 16000 Hz, etc., el proyecto o el **dispositivo de entrada/salida** está configurado así (p. ej. utilitario **Audio MIDI Setup** en macOS, o el dispositivo elegido en Reaper/Logic). El plugin no fuerza 48 kHz por sí mismo; hay que subir la tasa en la configuración de audio del host.
+
 ---
 
 ## 6. Revisión del Ciclo de Audio

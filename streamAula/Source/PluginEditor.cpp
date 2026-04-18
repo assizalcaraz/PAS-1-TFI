@@ -8,6 +8,7 @@
 
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include <cmath>
 
 // Helper para crear String desde literales UTF-8 de forma segura
 // Evita problemas de aserción en juce_String.cpp con caracteres no ASCII
@@ -58,7 +59,9 @@ void StreamAulaAudioProcessorEditor::paint (juce::Graphics& g)
         int freeSpace = bufferManager->getFreeSpace();
         int64_t sampleCount = bufferManager->getCurrentSampleCount();
         int bufferSize = bufferManager->getBufferSize();
-        double sampleRate = bufferManager->getSampleRate();
+        // Tasa real del host (JUCE); coincide con la que recibió prepareToPlay.
+        const double sampleRateHost = audioProcessor.getSampleRate();
+        const double sampleRateBuf = bufferManager->getSampleRate();
         int numChannels = bufferManager->getNumChannels();
 
         // Ocupación = muestras listas para el lector (fan-out), no (bufferSize - freeSpace):
@@ -86,10 +89,14 @@ void StreamAulaAudioProcessorEditor::paint (juce::Graphics& g)
         infoText << U8("Espacio libre p/escritura (host): ") << freeSpace << "\n";
         infoText << U8("Ocupaci\xc3\xb3n (datos pendientes): ") << juce::String::formatted ("%.1f", usagePercent) << "%\n";
         infoText << "Total samples procesados: " << sampleCount << "\n";
-        infoText << "Sample Rate: " << (int)sampleRate << " Hz\n";
+        infoText << U8("Tasa de muestreo (motor del host / DAW): ")
+                 << juce::String::formatted ("%.0f", sampleRateHost) << U8(" Hz\n");
+        if (std::abs (sampleRateHost - sampleRateBuf) > 0.5)
+            infoText << U8("(!) Buffer interno reporta ") << juce::String::formatted ("%.0f", sampleRateBuf)
+                     << U8(" Hz (no deber\xc3\xada ocurrir; reinicie reproducci\xc3\xb3n)\n");
         infoText << U8("Canales: ") << numChannels << "\n";
-        infoText << "Tamaño buffer: " << bufferSize << " samples (~" 
-                 << juce::String::formatted("%.2f", bufferSize / sampleRate) << " seg)";
+        infoText << U8("Tama\xc3\xb1o buffer: ") << bufferSize << U8(" muestras (~")
+                 << juce::String::formatted ("%.2f", bufferSize / sampleRateHost) << U8(" s)");
         
         g.setColour (juce::Colours::white);
         g.drawFittedText (infoText, bounds.removeFromTop(200), juce::Justification::centredLeft, 7);
