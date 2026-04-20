@@ -7,6 +7,12 @@
 
 ---
 
+## Demo
+
+[Mira el funcionamiento del plugin](https://youtu.be/fs5obFyNPYs)
+
+---
+
 ## Descripción
 
 streamAula es un plugin de audio desarrollado en C++ utilizando el framework JUCE que permite el streaming de audio en tiempo real desde un DAW hacia múltiples clientes conectados a través de la red local.
@@ -148,12 +154,6 @@ cp -r Builds/MacOSX/build/streamAula.component ~/Library/Audio/Plug-Ins/Componen
 | Canales | Estéreo |
 | Formato salida | PCM 16-bit |
 | Latencia objetivo | <20ms |
-
----
-
-## Demo
-
-Mira el funcionamiento del plugin en: [https://youtu.be/fs5obFyNPYs](https://youtu.be/fs5obFyNPYs)
 
 ---
 
