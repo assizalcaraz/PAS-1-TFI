@@ -151,10 +151,15 @@ cp -r Builds/MacOSX/build/streamAula.component ~/Library/Audio/Plug-Ins/Componen
 
 ---
 
+## Demo
+
+Mira el funcionamiento del plugin en: [https://youtu.be/fs5obFyNPYs](https://youtu.be/fs5obFyNPYs)
+
+---
+
 ## Repositorio
 
 - **GitHub**: https://github.com/assizalcaraz/PAS_TFI
-- **Documentación**: Carpeta `docs/`
 
 ---
 

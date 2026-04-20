@@ -869,7 +869,6 @@ bool NetworkStreamer::startServer()
     }
     
     // Crear socket del servidor usando juce::StreamingSocket
-    // Nota: Esta implementación es básica y puede necesitar ajustes según la versión de JUCE
     serverSocket = new juce::StreamingSocket();
     
     // Intentar crear listener en todas las interfaces (0.0.0.0)

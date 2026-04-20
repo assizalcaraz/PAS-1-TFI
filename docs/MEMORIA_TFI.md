@@ -140,13 +140,6 @@ void processBlock(AudioBuffer<float>& buffer, MidiBuffer& midi) {
 
 ---
 
-## 7. Entregables
-
-1. **Plugin funcional**: Compilado como VST3/AU
-2. **Código fuente**: Proyecto JUCE completo
-3. **Esta memoria**: Descripción del instrumento y decisiones de diseño
-4. **Video demostrativo**: (requiere captura de pantalla)
-
 ---
 
 *Trabajo Final Integrador - PAS - UNA - 2026*
